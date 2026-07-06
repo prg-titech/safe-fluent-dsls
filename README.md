@@ -77,3 +77,9 @@ we only now what the return type should be. As a consequence:
 - There should still be dynamic errors in case the result of `foo()` causes
 invalid syntax
 - Optional: Warn the user that this kind of dynamic call could cause errors at runtime
+
+### [Fling - A Fluent API Generator](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2019.13)
+
+Fluent API Generator for LR(k), k >= 0, Grammars, which encodes its syntax in
+any type system with parametric polymorphism.
+The tool itself is written for Java, but the theoretical result is more interesting.
