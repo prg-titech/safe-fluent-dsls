@@ -1,0 +1,10 @@
+name = "TypedFluentDSLs"
+version = "0.1.0"
+defaultTargets = ["typedfluentdsls"]
+
+[[lean_lib]]
+name = "TypedFluentDSLs"
+
+[[lean_exe]]
+name = "typedfluentdsls"
+root = "Main"
