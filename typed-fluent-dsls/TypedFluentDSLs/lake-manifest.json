@@ -1,0 +1,16 @@
+{"version": "1.2.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"url": "https://github.com/pandaman64/lean-regex",
+   "type": "git",
+   "subDir": "regex",
+   "scope": "",
+   "rev": "3e43b3312632dbc1ceee0dbe0a249fadcad264df",
+   "name": "Regex",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "v4.31.0",
+   "inherited": false,
+   "configFile": "lakefile.toml"}],
+ "name": "TypedFluentDSLs",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}
