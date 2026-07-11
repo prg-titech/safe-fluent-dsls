@@ -1,11 +1,12 @@
 # safe-fluent-dsls
+
 This repository is for research on embedding fluent DSLs into host languages safely. Static/Compile-time checks are supposed to ensure that embedded-DSL terms are syntactically correct, and well-formed.
 
 ## Related Work
 
 Fluent API generators, which when given a grammar generate a fluent API for an
 EDSL, are already widely available.
-Tools like [Erilex](https://link.springer.com/chapter/10.1007/978-3-642-13953-6_11), 
+Tools like [Erilex](https://link.springer.com/chapter/10.1007/978-3-642-13953-6_11),
 or Fajita(no reference available), can generate a fluent API from an LL(1) grammar.
 More recent research is also able to parse LR(1) grammars, which corresponds
 to the class of all deterministic context-free grammars, thus ideal for programming
@@ -25,7 +26,8 @@ Works for LL(1) grammars. Allows both flat-(fluent) and sub-chaining (tree) call
 styles. The choice is up to the user of the generated API.
 
 Example of Flat-Chaining:
-```
+
+```none
 Graph.digraph("test")
      .node("A")
      .node("B")
@@ -42,7 +44,7 @@ Graph.digraph("test")
 
 Example of Sub-chaining:
 
-```
+```none
 Graph.digraph("test")
      .node("A")
      .node("B")
@@ -65,7 +67,7 @@ static analysis for fluent APIs with such placeholders.
 
 Example of fluent API use which needs placeholders:
 
-```
+```java-lines
 Query.select("*").from(foo())
 ```
 
