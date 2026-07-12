@@ -35,20 +35,21 @@ public class FlingPluginTest {
     void createsFile() throws IOException {
         Files.createDirectories(projectDir);
         Files.writeString(projectDir.resolve("settings.gradle"), "");
-        Path pluginJar = Path.of("build/libs")
-                .resolve("fling-plugin-0.1-SNAPSHOT.jar")   // or whatever your archive name is
-                .toAbsolutePath();
 
-        Files.writeString(projectDir.resolve("build.gradle"), String.format("""
+        Files.writeString(projectDir.resolve("build.gradle"), """
             plugins {
                 id("java")
-                id("prg.titech.fling-plugin")
+                id("prg.titech.fling-plugin") version "0.1-SNAPSHOT"
+            }
+            
+            repositories {
+                mavenLocal()
             }
             
             dependencies {
-                "grammarImplementation"(files("%s"))
+               "grammarImplementation"("prg.titech:fling-api:0.1-SNAPSHOT")
             }
-            """, pluginJar));
+            """);
         copyResources("input", grammarDir);
 
         BuildResult result = GradleRunner.create()
@@ -57,17 +58,24 @@ public class FlingPluginTest {
                 .withArguments("generateFluentAPIs")
                 .build();
 
+        System.out.println(result.getOutput());
+
         assertEquals(
                 TaskOutcome.SUCCESS,
                 Objects.requireNonNull(result.task(":generateFluentAPIs")).getOutcome()
         );
 
-        Path outputAPI = generatedSourcesDir.resolve("Demo.java");
-        assertTrue(Files.exists(outputAPI));
-        Path outputAST = generatedSourcesDir.resolve("DemoAST.java");
-        assertTrue(Files.exists(outputAST));
-        Path outputCompiler = generatedSourcesDir.resolve("DemoCompiler.java");
-        assertTrue(Files.exists(outputCompiler));
+        assertPathExists(generatedSourcesDir.resolve("demo/Demo.java"));
+        assertPathExists(generatedSourcesDir.resolve("demo/DemoAST.java"));
+        assertPathExists(generatedSourcesDir.resolve("demo/DemoCompiler.java"));
+
+        assertPathExists(generatedSourcesDir.resolve("sql/SQL.java"));
+        assertPathExists(generatedSourcesDir.resolve("sql/SQLAST.java"));
+        assertPathExists(generatedSourcesDir.resolve("sql/SQLCompiler.java"));
+    }
+
+    private static void assertPathExists(Path path) {
+        assertTrue(Files.exists(path));
     }
 
     @SuppressWarnings("all") private static void copyResources(String resourceDir, Path destination) throws IOException {

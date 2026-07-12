@@ -1,3 +1,5 @@
+package sql;
+
 import fling.BNF;
 import fling.Terminal;
 import fling.Variable;
@@ -6,22 +8,21 @@ import prg.titech.api.Grammar;
 
 import static fling.grammars.api.BNFAPI.bnf;
 
-public class Demo implements Grammar {
+public class SQL implements Grammar {
     public enum Alphabet implements Terminal {
-        a, c
+        select, from
     }
 
     public enum NonTerms implements Variable {
-        P
+        Query
     }
 
     public static final BNF bnf = bnf(). //
-            start(NonTerms.P). //
-            derive(NonTerms.P).to(Alphabet.a, NonTerms.P, Alphabet.c, NonTerms.P). //
-            derive(NonTerms.P).toEpsilon(). //
+            start(NonTerms.Query). //
+            derive(NonTerms.Query).to(Alphabet.select.with(String.class), Alphabet.from.with(String.class)). //
             build();
-    public static final JavaMediator jm = new JavaMediator(bnf, //
-            "example.generated", "BalancedParentheses", Alphabet.class);
+
+    private static final JavaMediator jm = new JavaMediator(bnf, "sql", "SQL", Alphabet.class);
 
     @Override
     public JavaMediator getJavaMediator() {

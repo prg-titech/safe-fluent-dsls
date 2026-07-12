@@ -45,6 +45,6 @@ tasks.jar {
 }
 
 tasks.test {
-    dependsOn(tasks.jar)
+    dependsOn(tasks.publishToMavenLocal)
     useJUnitPlatform()
 }

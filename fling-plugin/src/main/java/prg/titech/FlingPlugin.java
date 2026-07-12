@@ -24,7 +24,7 @@ import org.gradle.api.tasks.TaskProvider;
                 task -> {
                     task.dependsOn("grammarClasses");
                     task.getRuntimeClasspath().from(grammar.getRuntimeClasspath());
-                    task.getClassName().set("Demo");
+                    task.getClassesDir().from(grammar.getOutput().getClassesDirs());
                     task.getOutputDirectory().convention(
                             target.getLayout().getBuildDirectory().dir("generated/sources/fling/main/java")
                     );
