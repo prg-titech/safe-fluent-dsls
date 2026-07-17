@@ -65,13 +65,13 @@ public class FlingPluginTest {
                 Objects.requireNonNull(result.task(":generateFluentAPIs")).getOutcome()
         );
 
-        assertPathExists(generatedSourcesDir.resolve("demo/Demo.java"));
-        assertPathExists(generatedSourcesDir.resolve("demo/DemoAST.java"));
-        assertPathExists(generatedSourcesDir.resolve("demo/DemoCompiler.java"));
+        assertPathExists(generatedSourcesDir.resolve("demo/generated/Demo.java"));
+        assertPathExists(generatedSourcesDir.resolve("demo/generated/DemoAST.java"));
+        assertPathExists(generatedSourcesDir.resolve("demo/generated/DemoCompiler.java"));
 
-        assertPathExists(generatedSourcesDir.resolve("sql/SQL.java"));
-        assertPathExists(generatedSourcesDir.resolve("sql/SQLAST.java"));
-        assertPathExists(generatedSourcesDir.resolve("sql/SQLCompiler.java"));
+        assertPathExists(generatedSourcesDir.resolve("sql/generated/SQL.java"));
+        assertPathExists(generatedSourcesDir.resolve("sql/generated/SQLAST.java"));
+        assertPathExists(generatedSourcesDir.resolve("sql/generated/SQLCompiler.java"));
     }
 
     private static void assertPathExists(Path path) {

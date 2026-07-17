@@ -35,6 +35,10 @@ import org.gradle.api.tasks.TaskProvider;
         main.getJava().srcDir(
                 taskProvider.get().getOutputDirectory()
         );
+        target.getDependencies().add(
+                main.getImplementationConfigurationName(),
+                grammar.getOutput()
+        );
     }
 
 }

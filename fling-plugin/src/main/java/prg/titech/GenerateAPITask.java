@@ -74,6 +74,7 @@ public abstract class GenerateAPITask extends DefaultTask {
 
         Map<String, String> generatedSources = getGeneratedSources(grammars);
         Path output = getOutputDirectory().get().getAsFile().toPath();
+
         Files.createDirectories(output);
         Formatter formatter = new Formatter();
         for (Map.Entry<String, String> file : generatedSources.entrySet()) {
@@ -87,9 +88,11 @@ public abstract class GenerateAPITask extends DefaultTask {
         Map<String, String> generatedSources = new HashMap<>(3 * grammars.size());
         for (Map.Entry<Class<?>, Grammar> grammarEntry : grammars.entrySet()) {
             JavaMediator jm = grammarEntry.getValue().getJavaMediator();
-            generatedSources.put(grammarEntry.getKey().getName(), jm.apiClass);
-            generatedSources.put(grammarEntry.getKey().getName() + "AST", jm.astClass);
-            generatedSources.put(grammarEntry.getKey().getName() + "Compiler", jm.astCompilerClass);
+            String packageName = grammarEntry.getKey().getPackageName() + ".generated";
+            String className = packageName + "." + grammarEntry.getKey().getSimpleName();
+            generatedSources.put(className, jm.apiClass);
+            generatedSources.put(className + "AST", jm.astClass);
+            generatedSources.put(className + "Compiler", jm.astCompilerClass);
         }
         return generatedSources;
     }
