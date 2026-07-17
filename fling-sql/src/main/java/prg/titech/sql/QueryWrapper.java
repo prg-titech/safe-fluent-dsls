@@ -16,8 +16,8 @@ public class QueryWrapper {
         Query ast1 = select("*").from("Students").$();
         System.out.println(ast1.select);
 
-         Query ast2 = select("name, birth_year").from("Students")
-                .where(Exp.columnId("birth_year").equals().nat(2005)).$();
+         // Query ast2 = select("name, birth_year").from("Students")
+         //       .where(SQL.Exp.columnId("birth_year").equals().nat(2005)).$();
 
         Query ast3 = select("name, birth_year").from("Students")
                 .where("birth_year == 2005").$();

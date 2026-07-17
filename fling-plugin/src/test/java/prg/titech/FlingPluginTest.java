@@ -44,10 +44,12 @@ public class FlingPluginTest {
             
             repositories {
                 mavenLocal()
+                mavenCentral()
             }
             
             dependencies {
                "grammarImplementation"("prg.titech:fling-api:0.1-SNAPSHOT")
+               implementation("com.google.googlejavaformat:google-java-format:1.6")
             }
             """);
         copyResources("input", grammarDir);
