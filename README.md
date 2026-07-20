@@ -85,3 +85,9 @@ invalid syntax
 Fluent API Generator for LR(k), k >= 0, Grammars, which encodes its syntax in
 any type system with parametric polymorphism.
 The tool itself is written for Java, but the theoretical result is more interesting.
+
+### [An Empirical Study and Code-Generation Techniques for Fluent Interfaces](https://static.csg.ci.i.u-tokyo.ac.jp/papers/21/nakamaru-phd.pdf)
+
+Exhaustive review of fluent interfaces in general and safe fluent
+interface generation techniques in particular.
+PROTOCOL and SilverChain are especially interesting.
