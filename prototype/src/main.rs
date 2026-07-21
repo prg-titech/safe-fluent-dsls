@@ -1,24 +1,17 @@
 #![allow(unused)]
+mod sql;
+mod ast;
+lalrpop_mod!(pub chain);
 
 use crate::sql::Query;
-
-mod sql;
+use lalrpop_util::lalrpop_mod;
+use crate::ast::Chain;
 
 fn main() {
-    let my_query: Query = Query::builder()
-        .select("name")
-        .select("birthday")
-        .from("Students")
-        .from("Students2")
-        .where_("birthday >= 2000-01-01")
-        .where_("name == 'Alex Meyer'")
-        .build();
-    println!("{my_query}");
+    let try_trim = "\"Hello World!\"";
+    let trimmed = try_trim[1..try_trim.len()-1].to_string();
+    println!("{trimmed}");
 
-    let simple_query: Query = Query::builder()
-        .select("*")
-        .from("Students")
-        .build();
-    println!();
-    println!("{simple_query}");
+    let chain: Chain = chain::ChainParser::new().parse("select(\"*\")\n    .    from   ( \"Students\"     )     ").unwrap();
+    println!("{chain:?}");
 }

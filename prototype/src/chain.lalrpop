@@ -1,0 +1,30 @@
+use std::str::FromStr;
+use crate::ast::{Chain, Call, Value};
+
+grammar;
+
+pub Chain: Chain = {
+    <mut cs:(<Call> ".")*> <last:Call> => { cs.push(last); Chain::new(cs) }
+}
+
+pub Call: Call = {
+    <method:ID> "(" <mut args:(<Value> ",")*> <last_arg:Value?> ")" => {
+        if let Some(arg) = last_arg {
+            args.push(arg);
+        }
+        Call::new(method, args)
+    }
+}
+
+Value: Value = {
+    <var:ID> => Value::Variable(var),
+    <n:Int> => Value::Int(n),
+    <s:StringLit> => Value::String(s),
+    <c:Chain> => Value::Chain(Box::new(c))
+}
+
+ID: String = <s:r"[a-zA-Z_$][a-zA-Z0-9_$]*"> => s.to_string();
+
+Int: i32 = r"[-+]?[0-9]+" => i32::from_str(<>).unwrap();
+
+StringLit: String = <s:r#""([^"\r\n\\]|\\.)*""#> => s[1..s.len()-1].to_string();
