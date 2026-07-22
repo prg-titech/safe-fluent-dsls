@@ -1,6 +1,7 @@
 # safe-fluent-dsls
 
-This repository is for research on embedding fluent DSLs into host languages safely. Static/Compile-time checks are supposed to ensure that embedded-DSL terms are syntactically correct, and well-formed.
+This repository is for research on embedding fluent DSLs into host languages safely. Static/Compile-time checks are
+supposed to ensure that embedded-DSL terms are syntactically correct, and well-formed.
 
 ## Related Work
 
@@ -14,7 +15,7 @@ languages.
 
 Syntax checking of the generated API, while not widely available,
 
-### [Generating a fluent API with syntax checking from an LR grammar](http://localhost)
+### [Generating a fluent API with syntax checking from an LR grammar](https://dl.acm.org/doi/10.1145/3360560)
 
 Generates fluent APIs which uses the type system of the host language to perform
 type checking. However, numeric and string literals are only checked for correctness
@@ -77,7 +78,7 @@ we only now what the return type should be. As a consequence:
 
 - Static Analysis should allow for placeholders during parsing
 - There should still be dynamic errors in case the result of `foo()` causes
-invalid syntax
+  invalid syntax
 - Optional: Warn the user that this kind of dynamic call could cause errors at runtime
 
 ### [Fling - A Fluent API Generator](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ECOOP.2019.13)
