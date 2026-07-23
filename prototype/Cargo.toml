@@ -9,3 +9,5 @@ lalrpop = "0.23.1"
 [dependencies]
 nonempty = "0.12"
 lalrpop-util = { version = "0.23.1", features = ["lexer", "unicode"] }
+tree-sitter = "0.26.*"
+tree-sitter-java = "0.23.*"
