@@ -1,18 +1,26 @@
 #![allow(unused)]
 mod ast;
 mod sql;
-lalrpop_mod!(pub chain);
+mod chain;
 
 use crate::ast::Chain;
-use lalrpop_util::lalrpop_mod;
+use crate::chain::ChainParser;
+
+use tree_sitter::{InputEdit, Language, Parser, Point};
 
 fn main() {
-    let try_trim = "\"Hello World!\"";
-    let trimmed = try_trim[1..try_trim.len() - 1].to_string();
-    println!("{trimmed}");
+    let mut parser = Parser::new();
+    parser.set_language(&tree_sitter_java::LANGUAGE.into()).expect("Error loading Java grammar");
 
-    let chain: Chain = chain::ChainParser::new()
-        .parse("select(\"*\")\n    .    from   ( \"Students\"     )     ")
-        .unwrap();
-    println!("{chain:?}");
+    let source_code =
+r#"public class Example {
+    public void main(String[] args) {
+        Query query = SQL.select("*").from("Students").where("age >= 18").build();
+    }
+}"#;
+    println!("{source_code}");
+
+    let mut tree = parser.parse(source_code, None).unwrap();
+    let root_node = tree.root_node();
+    println!("{root_node:#?}");
 }
