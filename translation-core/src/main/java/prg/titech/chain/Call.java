@@ -1,12 +1,14 @@
 package prg.titech.chain;
 
 import prg.titech.chain.builder.CallBuilder;
+import prg.titech.chain.iter.ChainTraverser;
+import prg.titech.chain.iter.context.Frame;
 import prg.titech.chain.visit.ChainVisitor;
-import prg.titech.chain.visit.Traversable;
+import prg.titech.chain.visit.Visitable;
 
 import java.util.List;
 
-public class Call implements Traversable<ChainVisitor> {
+public class Call implements Visitable {
     private final String methodName;
     protected final List<Value> parameters;
 
@@ -28,11 +30,12 @@ public class Call implements Traversable<ChainVisitor> {
     }
 
     @Override
-    public void traverse(ChainVisitor visitor) {
-        visitor.visit(this);
-        for (Value parameter : parameters) {
-            parameter.traverse(visitor);
-        }
-        visitor.endVisit(this);
+    public void accept(ChainTraverser traverser) {
+        traverser.traverse(this);
+    }
+
+    @Override
+    public void accept(Frame context, ChainVisitor visitor) {
+        visitor.visit(context, this);
     }
 }

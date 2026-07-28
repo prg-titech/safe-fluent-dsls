@@ -1,6 +1,8 @@
 package prg.titech.chain;
 
 import prg.titech.chain.builder.ChainBuilder;
+import prg.titech.chain.iter.ChainTraverser;
+import prg.titech.chain.iter.context.Frame;
 import prg.titech.chain.visit.ChainVisitor;
 import prg.titech.chain.visit.PrettyPrintVisitor;
 
@@ -17,15 +19,16 @@ public class Chain implements Value {
         return new ChainBuilder();
     }
 
-    @Override
-    public void traverse(ChainVisitor visitor) {
-        visitor.visit((Value) this);
-        visitor.visit(this);
-        for (Call call : calls) {
-            call.traverse(visitor);
-        }
-        visitor.endVisit(this);
-        visitor.endVisit((Value) this);
+    public List<Call> getCalls() {
+        return calls;
+    }
+
+    public void accept(ChainTraverser traverser) {
+        traverser.traverse(this);
+    }
+
+    public void accept(Frame context, ChainVisitor visitor) {
+        visitor.visit(context, this);
     }
 
     @Override

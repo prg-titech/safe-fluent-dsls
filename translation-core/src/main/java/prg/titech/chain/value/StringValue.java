@@ -1,6 +1,8 @@
 package prg.titech.chain.value;
 
 import prg.titech.chain.Value;
+import prg.titech.chain.iter.ChainTraverser;
+import prg.titech.chain.iter.context.Frame;
 import prg.titech.chain.visit.ChainVisitor;
 
 public class StringValue implements Value {
@@ -16,10 +18,12 @@ public class StringValue implements Value {
     }
 
     @Override
-    public void traverse(ChainVisitor chainVisitor) {
-        chainVisitor.visit((Value) this);
-        chainVisitor.visit(this);
-        chainVisitor.endVisit(this);
-        chainVisitor.endVisit((Value) this);
+    public void accept(ChainTraverser traverser) {
+        traverser.traverse(this);
+    }
+
+    @Override
+    public void accept(Frame context, ChainVisitor chainVisitor) {
+        chainVisitor.visit(context, this);
     }
 }

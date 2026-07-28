@@ -2,15 +2,13 @@ package prg.titech.chain.visit;
 
 import prg.titech.chain.Call;
 import prg.titech.chain.Chain;
-import prg.titech.chain.Value;
+import prg.titech.chain.iter.ChainTraverser;
+import prg.titech.chain.iter.context.Frame;
 import prg.titech.chain.value.StringValue;
 
 public class PrettyPrintVisitor implements ChainVisitor {
     private final StringBuilder sb = new StringBuilder();
     private final boolean doIndent;
-
-    private boolean needCallDelimiter = false;
-    private boolean needParameterDelimiter = false;
 
     private PrettyPrintVisitor(boolean doIndent) {
         this.doIndent = doIndent;
@@ -22,48 +20,37 @@ public class PrettyPrintVisitor implements ChainVisitor {
 
     public static String prettyPrint(Chain chain, boolean doIndent) {
         PrettyPrintVisitor self = new PrettyPrintVisitor(doIndent);
-        chain.traverse(self);
+        ChainTraverser traverser = new ChainTraverser(self, ChainTraverser.Strategy.ALL);
+        traverser.traverse(chain);
         return self.sb.toString();
     }
 
     @Override
-    public void visit(Chain chain) {
-        needCallDelimiter = false;
-    }
-
-    @Override
-    public void visit(Call call) {
-        if (needCallDelimiter) {
+    public void visit(Frame context, Chain chain) {
+        if (context.isMiddlePosition()) {
             if (doIndent) {
                 sb.append('\n');
             }
             sb.append('.');
         }
-        sb.append(call.getMethodName());
-        sb.append('(');
     }
 
     @Override
-    public void endVisit(Call call) {
-        sb.append(')');
-        needCallDelimiter = true;
-        needParameterDelimiter = false;
-    }
-
-    @Override
-    public void visit(Value value) {
-        if (needParameterDelimiter) {
+    public void visit(Frame context, Call call) {
+        if (context.isFirstPosition()) {
+            sb.append(call.getMethodName());
+            sb.append('(');
+        }
+        if (context.isLastPosition()) {
+            sb.append(')');
+        }
+        if (context.isMiddlePosition()) {
             sb.append(", ");
         }
     }
 
     @Override
-    public void endVisit(Value value) {
-        needParameterDelimiter = true;
-    }
-
-    @Override
-    public void visit(StringValue value) {
+    public void visit(Frame context, StringValue value) {
         sb.append('"');
         sb.append(value);
         sb.append('"');
