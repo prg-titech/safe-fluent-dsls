@@ -8,27 +8,15 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.stream.Stream;
 
+import static prg.titech.TestFixtures.*;
+
 public class QueryTest {
 
     protected static Stream<Arguments> validQueries() {
         return Stream.of(
-                Arguments.of(Query.select("*").from("Students").build()),
-                Arguments.of(Query.select("name", "birth_year")
-                        .from("Students")
-                        .where()
-                        .columnId("birth_year")
-                        .ge()
-                        .value("2010")
-                        .and()
-                        .columnId("name")
-                        .eq()
-                        .value("John Doe")
-                        .build()),
-                Arguments.of(Query.select("name", "birth_year")
-                        .from("Students")
-                        .where(Where.columnId("birth_year").lt().value("2010").build())
-                        .and(Where.columnId("name").ne().value("Gary Stu").build())
-                        .build())
+                Arguments.of(simpleQuery()),
+                Arguments.of(complexQuery()),
+                Arguments.of(subchainQuery())
         );
     }
 

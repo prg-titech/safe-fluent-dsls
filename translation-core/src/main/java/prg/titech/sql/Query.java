@@ -4,6 +4,10 @@ import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 import net.sf.jsqlparser.JSQLParserException;
 import net.sf.jsqlparser.parser.CCJSqlParserUtil;
+import prg.titech.chain.Call;
+import prg.titech.chain.Chain;
+import prg.titech.chain.builder.CallBuilder;
+import prg.titech.chain.builder.ChainBuilder;
 
 public record Query(
         String[] selections,
@@ -42,5 +46,20 @@ public record Query(
             sb.append(whereClause.raw());
         }
         return sb.toString();
+    }
+
+    public Chain toChain() {
+        CallBuilder select = Call.method("select");
+        for (String selection : selections) {
+            select.arg(selection);
+        }
+        ChainBuilder result = Chain.builder()
+                .call(select.build())
+                .call(Call.method("from").arg(source));
+        if (whereClause != null) {
+            result.call(Call.method("where").arg(whereClause.raw()));
+        }
+        result.call(Call.method("build").build());
+        return result.build();
     }
 }

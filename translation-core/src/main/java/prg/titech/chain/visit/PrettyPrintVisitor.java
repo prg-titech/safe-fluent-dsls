@@ -52,7 +52,7 @@ public class PrettyPrintVisitor implements ChainVisitor {
     @Override
     public void visit(Frame context, StringValue value) {
         sb.append('"');
-        sb.append(value);
+        sb.append(value.toString().replaceAll("\"", "\\\\\""));
         sb.append('"');
     }
 }
