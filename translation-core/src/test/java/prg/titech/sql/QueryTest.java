@@ -1,10 +1,11 @@
 package prg.titech.sql;
 
+import net.sf.jsqlparser.parser.CCJSqlParserUtil;
 import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import prg.titech.sql.translate.Translator;
 
 import java.util.stream.Stream;
 
@@ -22,9 +23,15 @@ public class QueryTest {
 
     @ParameterizedTest
     @MethodSource("validQueries")
-    @DisplayName("testIsValid")
     public void testValid(Query query) {
         Assertions.assertTrue(query.isValid());
+    }
+
+    @ParameterizedTest
+    @MethodSource("validQueries")
+    public void testTranslation(Query query) {
+        String translation = String.join(" ", Translator.translate(query.toChain()));
+        Assertions.assertDoesNotThrow(() -> CCJSqlParserUtil.parse(translation));
     }
 
 
