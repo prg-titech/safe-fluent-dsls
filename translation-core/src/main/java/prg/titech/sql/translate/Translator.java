@@ -30,7 +30,11 @@ public class Translator implements ChainVisitor {
 
     private final List<String> tokens = new ArrayList<>();
 
-    public static List<String> translate(Chain chain) {
+    public static String translate(Chain chain) {
+        return String.join(" ", translateTokens(chain));
+    }
+
+    public static List<String> translateTokens(Chain chain) {
         Translator self = new Translator();
         ChainTraverser traverser = new ChainTraverser(self, ChainTraverser.Strategy.ALL);
         chain.accept(traverser);
