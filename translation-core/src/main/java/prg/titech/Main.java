@@ -3,7 +3,7 @@ package prg.titech;
 import prg.titech.sql.Query;
 import prg.titech.sql.Where;
 import prg.titech.sql.analyze.SQLAnalyzer;
-import prg.titech.sql.translate.Translator;
+import prg.titech.sql.translate.SQLTranslator;
 
 
 public class Main {
@@ -28,8 +28,8 @@ public class Main {
                 .and(Where.columnId("name").ne().value("Gary Stu").build())
                 .build();
 
-        SQLAnalyzer.parse(Translator.translate(simpleQuery.toChain()));
-        SQLAnalyzer.parse(Translator.translate(complicatedQuery.toChain()));
-        SQLAnalyzer.parse(Translator.translate(subchainQuery.toChain()));
+        SQLAnalyzer.parse(SQLTranslator.translate(simpleQuery.toChain()));
+        SQLAnalyzer.parse(SQLTranslator.translate(complicatedQuery.toChain()));
+        SQLAnalyzer.parse(SQLTranslator.translate(subchainQuery.toChain()));
     }
 }

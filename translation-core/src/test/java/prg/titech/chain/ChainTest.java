@@ -22,6 +22,7 @@ public class ChainTest {
     @ParameterizedTest
     @MethodSource("chainExamples")
     public void testPrettyPrint(Chain chain, String expectedResult) {
+        System.out.println(chain);
         Assertions.assertEquals(expectedResult, chain.toString());
     }
 }
