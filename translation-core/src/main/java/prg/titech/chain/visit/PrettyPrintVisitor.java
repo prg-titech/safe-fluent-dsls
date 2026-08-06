@@ -4,6 +4,7 @@ import prg.titech.chain.Call;
 import prg.titech.chain.Chain;
 import prg.titech.chain.iter.ChainTraverser;
 import prg.titech.chain.iter.context.Frame;
+import prg.titech.chain.value.JavaExprValue;
 import prg.titech.chain.value.StringValue;
 
 public class PrettyPrintVisitor implements ChainVisitor {
@@ -54,5 +55,10 @@ public class PrettyPrintVisitor implements ChainVisitor {
         sb.append('"');
         sb.append(value.toString().replaceAll("\"", "\\\\\""));
         sb.append('"');
+    }
+
+    @Override
+    public void visit(Frame context, JavaExprValue expr) {
+        sb.append(expr.toString());
     }
 }

@@ -59,7 +59,7 @@ public class ChainTraverser {
         context.ascent();
     }
 
-    public void accept(Visitable v) {
+    private void accept(Visitable v) {
         Frame context = this.context.getCurrentFrame();
         if (strategy.test(context)) {
             v.accept(context, visitor);

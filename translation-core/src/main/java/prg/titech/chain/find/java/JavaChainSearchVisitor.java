@@ -1,14 +1,19 @@
 package prg.titech.chain.find.java;
 
 import com.github.javaparser.ast.Node;
+import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.visitor.VoidVisitorAdapter;
 import prg.titech.chain.Call;
 import prg.titech.chain.Chain;
+import prg.titech.chain.builder.CallBuilder;
+import prg.titech.chain.value.JavaExprValue;
 
 import java.util.List;
 
 public class JavaChainSearchVisitor extends VoidVisitorAdapter<JavaChainSearchState> {
+
+    private JavaChainSearchVisitor() {}
 
     public static List<Chain> findChains(Node n) {
         var visitor = new JavaChainSearchVisitor();
@@ -31,7 +36,11 @@ public class JavaChainSearchVisitor extends VoidVisitorAdapter<JavaChainSearchSt
         method.getTypeArguments().ifPresent(l -> l.forEach(t -> t.accept(this, state)));
         method.getComment().ifPresent(c -> c.accept(this, state));
 
-        state.getCurrent().call(Call.method(method.getNameAsString()).build());
+        CallBuilder currentCall = Call.method(method.getNameAsString());
+        for (Expression e : method.getArguments()) {
+            currentCall.arg(new JavaExprValue(e));
+        }
+        state.getCurrent().call(currentCall.build());
         if (state.noMoreMethodsExpected()) {
             state.completeChain();
         }
