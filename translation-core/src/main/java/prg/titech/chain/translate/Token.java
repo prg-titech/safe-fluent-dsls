@@ -2,12 +2,10 @@ package prg.titech.chain.translate;
 
 import jakarta.annotation.Nonnull;
 
-import java.awt.*;
-
 public record Token(
         String image,
-        int startByte,
-        int endByte,
+        long startByte,
+        long endByte,
         Point start,
         Point end
 ) {
@@ -18,6 +16,6 @@ public record Token(
     }
 
     public String toDebugString() {
-        return "<\"" + image.replace(">", ">>") + "\", " + startByte + "-" + endByte + ">" ;
+        return "<\"" + image.replace("\"", "\\\"") + "\", " + startByte + "-" + endByte + ", " + start + "-" + end + ">" ;
     }
 }

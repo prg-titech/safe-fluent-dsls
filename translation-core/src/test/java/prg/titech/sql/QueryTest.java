@@ -5,7 +5,9 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import prg.titech.chain.Chain;
 import prg.titech.chain.translate.TokenList;
+import prg.titech.sql.analyze.SQLAnalyzer;
 import prg.titech.sql.translate.SQLTranslator;
 
 import java.util.stream.Stream;
@@ -34,6 +36,13 @@ public class QueryTest {
         TokenList translation = SQLTranslator.translateTokens(query.toChain());
         System.out.println(translation.toDebugString());
         Assertions.assertDoesNotThrow(() -> CCJSqlParserUtil.parse(translation.toString()));
+    }
+
+    @ParameterizedTest
+    @MethodSource("prg.titech.TestFixtures#invalidQueryChains")
+    public void testAnalysis(Chain query) {
+        TokenList translation = SQLTranslator.translateTokens(query);
+        Assertions.assertFalse(SQLAnalyzer.analyze(translation));
     }
 
 

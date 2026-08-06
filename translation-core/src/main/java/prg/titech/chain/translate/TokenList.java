@@ -2,7 +2,6 @@ package prg.titech.chain.translate;
 
 import jakarta.annotation.Nonnull;
 
-import java.awt.*;
 import java.util.*;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -11,13 +10,13 @@ public class TokenList implements List<Token> {
     private final String delimiter;
     private final List<Token> base;
 
-    private Token currentToken = new Token("_IGNORE_", -1, 0, new Point(-1, 0), new Point(-1, 0));
+    private Token currentToken = new Token("_IGNORE_", -1, 0, new Point(-1, 0), new Point(0, 0));
 
     public TokenList() {
         this(" ", new ArrayList<>());
     }
 
-    public TokenList(List<Token> base) {
+    @SuppressWarnings("unused") public TokenList(List<Token> base) {
         this(" ", base);
     }
 
@@ -34,16 +33,15 @@ public class TokenList implements List<Token> {
     }
 
     private Token nextToken(String token) {
-        int startByte = currentToken.endByte();
-        int endByte = startByte + token.getBytes().length;
-        Point start = (Point) currentToken.end().clone();
-        start.translate(1, 0);
+        long startByte = currentToken.endByte();
+        long endByte = startByte + token.getBytes().length;
+        Point start = currentToken.end();
         Point endOffset = endOf(token);
         Point end;
-        if (endOffset.y == 0) {
-            end = new Point(start.x + endOffset.x, start.y);
+        if (endOffset.y() == 0) {
+            end = new Point(start.x() + endOffset.x(), start.y());
         } else {
-            end = new Point(endOffset.x, start.y + endOffset.y);
+            end = new Point(endOffset.x(), start.y() + endOffset.y());
         }
         currentToken = new Token(token, startByte, endByte, start, end);
         return currentToken;
