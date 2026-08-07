@@ -69,6 +69,7 @@ public class SQLTranslator implements Translator {
 
     @Override
     public void visit(Frame context, StringValue value) {
+        // TODO: Think about how to generalize string literal quotation
         if (context.getCurrentMethod().equals("value")) {
             addToken('"' + value.toString() + '"');
         } else {

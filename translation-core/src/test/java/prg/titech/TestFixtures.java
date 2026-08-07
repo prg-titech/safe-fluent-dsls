@@ -36,14 +36,37 @@ public class TestFixtures {
                 .build();
     }
 
-    public static Chain invalidSelectArgument() {
+    public static Query invalidSelectArgument() {
+        return Query.select("name", "<")
+                .from("Students")
+                .build();
+    }
+
+    public static Query fromTwice() {
+        return Query.select("*")
+                .from("Students")
+                .from("Teachers")
+                .build();
+    }
+
+    public static Query wrongKeywordOrder() {
+        return Query.select("*")
+                .where()
+                .columnId("name")
+                .eq()
+                .value("Mary Grey")
+                .from("Students")
+                .build();
+    }
+
+    public static Chain invalidSelectArgumentChain() {
         return Chain.builder()
                 .call(Call.method("select").arg("= 1").build())
                 .call(Call.method("from").arg("Students").build())
                 .build();
     }
 
-    public static Chain fromTwice() {
+    public static Chain fromTwiceChain() {
         return Chain.builder()
                 .call(Call.method("select").arg("*").build())
                 .call(Call.method("from").arg("Students").build())
@@ -51,7 +74,7 @@ public class TestFixtures {
                 .build();
     }
 
-    public static Chain wrongKeywordOrder() {
+    public static Chain wrongKeywordOrderChain() {
         return Chain.builder()
                 .call(Call.method("select").arg("*").build())
                 .call(Call.method("from").arg("Students").build())
@@ -64,9 +87,9 @@ public class TestFixtures {
 
     public static Stream<Arguments> invalidQueryChains() {
         return Stream.of(
-                Arguments.of(invalidSelectArgument()),
-                Arguments.of(fromTwice()),
-                Arguments.of(wrongKeywordOrder())
+                Arguments.of(invalidSelectArgumentChain()),
+                Arguments.of(fromTwiceChain()),
+                Arguments.of(wrongKeywordOrderChain())
         );
     }
 }
