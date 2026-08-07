@@ -3,6 +3,11 @@ package prg.titech.chain.iter.context;
 public class Frame {
     private int position = 0;
     private boolean lastPosition = false;
+    private final String currentMethod;
+
+    public Frame(String currentMethod) {
+        this.currentMethod = currentMethod;
+    }
 
     @SuppressWarnings("unused") public int getPosition() {
         return position;
@@ -26,5 +31,9 @@ public class Frame {
 
     public boolean isLastPosition() {
         return lastPosition;
+    }
+
+    public String getCurrentMethod() {
+        return currentMethod;
     }
 }

@@ -1,17 +1,14 @@
 package prg.titech.chain.value;
 
 import com.github.javaparser.ast.expr.Expression;
+import jakarta.annotation.Nonnull;
 import prg.titech.chain.Value;
 import prg.titech.chain.iter.ChainTraverser;
 import prg.titech.chain.iter.context.Frame;
 import prg.titech.chain.visit.ChainVisitor;
+import prg.titech.chain.visit.GenericVisitor;
 
-public class JavaExprValue implements Value {
-    private final Expression inner;
-
-    public JavaExprValue(Expression inner) {
-        this.inner = inner;
-    }
+public record JavaExprValue(Expression inner) implements Value {
 
     @Override
     public void accept(ChainTraverser traverser) {
@@ -24,7 +21,12 @@ public class JavaExprValue implements Value {
     }
 
     @Override
-    public String toString() {
+    public <R, S> R accept(GenericVisitor<R, S> visitor, S state) {
+        return visitor.visit(this, state);
+    }
+
+    @Override
+    public @Nonnull String toString() {
         return inner.toString();
     }
 }

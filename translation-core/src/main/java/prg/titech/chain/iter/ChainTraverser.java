@@ -42,6 +42,7 @@ public class ChainTraverser {
     }
 
     public void traverse(Call call) {
+        context.setCurrentMethod(call.getMethodName());
         context.descent();
         for (Value v : call.getParameters()) {
             accept(call);
@@ -50,6 +51,7 @@ public class ChainTraverser {
         context.setLastPosition();
         accept(call);
         context.ascent();
+        context.setCurrentMethod(null);
     }
 
     public void traverse(Value value) {

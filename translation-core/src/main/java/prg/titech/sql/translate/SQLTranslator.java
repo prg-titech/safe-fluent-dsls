@@ -2,8 +2,10 @@ package prg.titech.sql.translate;
 
 import prg.titech.chain.Chain;
 import prg.titech.chain.iter.ChainTraverser;
+import prg.titech.chain.iter.context.Frame;
 import prg.titech.chain.translate.TokenList;
 import prg.titech.chain.translate.Translator;
+import prg.titech.chain.value.StringValue;
 
 import java.util.*;
 
@@ -63,5 +65,14 @@ public class SQLTranslator implements Translator {
     @Override
     public Optional<String> getDelimiter(String method) {
         return Optional.of(",");
+    }
+
+    @Override
+    public void visit(Frame context, StringValue value) {
+        if (context.getCurrentMethod().equals("value")) {
+            addToken('"' + value.toString() + '"');
+        } else {
+            addToken(value.toString());
+        }
     }
 }

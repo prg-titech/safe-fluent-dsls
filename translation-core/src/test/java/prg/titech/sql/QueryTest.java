@@ -42,7 +42,7 @@ public class QueryTest {
     @MethodSource("prg.titech.TestFixtures#invalidQueryChains")
     public void testAnalysis(Chain query) {
         TokenList translation = SQLTranslator.translateTokens(query);
-        Assertions.assertFalse(SQLAnalyzer.analyze(translation));
+        Assertions.assertTrue(SQLAnalyzer.analyze(translation).isEmpty());
     }
 
 

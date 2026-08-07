@@ -7,4 +7,6 @@ public interface Visitable {
     void accept(ChainTraverser traverser);
 
     void accept(Frame context, ChainVisitor visitor);
+
+    <R, S> R accept(GenericVisitor<R, S> visitor, S state);
 }
