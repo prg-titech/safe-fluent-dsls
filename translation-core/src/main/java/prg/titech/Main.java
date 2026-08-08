@@ -3,7 +3,7 @@ package prg.titech;
 import net.sf.jsqlparser.parser.ParseException;
 import prg.titech.chain.Chain;
 import prg.titech.chain.find.java.JavaChainSearcher;
-import prg.titech.chain.translate.TokenList;
+import prg.titech.chain.translate.Translation;
 import prg.titech.sql.analyze.SQLAnalyzer;
 import prg.titech.sql.translate.SQLTranslator;
 
@@ -23,9 +23,9 @@ public class Main {
         for (Chain c : foundChains) {
             System.out.println("Found chain: " + c);
             System.out.println("Tokens: " + c.getTokenRange().orElseThrow());
-            TokenList translation = SQLTranslator.translateTokens(c);
+            Translation translation = SQLTranslator.translate(c);
             System.out.println("Translation: " + translation);
-            Optional<ParseException> parseError = SQLAnalyzer.analyze(translation);
+            Optional<ParseException> parseError = SQLAnalyzer.analyze(translation.toString());
             parseError.ifPresentOrElse(
                     e -> {
                         System.out.println("Parse error found!");

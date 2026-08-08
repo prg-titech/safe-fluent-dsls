@@ -1,40 +1,56 @@
 package prg.titech.chain.translate;
 
 import prg.titech.chain.Call;
-import prg.titech.chain.iter.context.Frame;
+import prg.titech.chain.Name;
+import prg.titech.chain.Value;
 import prg.titech.chain.value.StringValue;
-import prg.titech.chain.visit.ChainVisitor;
+import prg.titech.chain.visit.VoidVisitorAdaptor;
 
 import java.util.Optional;
 
-public interface Translator extends ChainVisitor {
-    TokenList getTokens();
+public abstract class Translator extends VoidVisitorAdaptor<Translation> {
+    protected String currentMethod;
 
-    default void addToken(String token) {
-        getTokens().add(token);
+    protected void addTokenIfPresent(Optional<String> token, Translation state) {
+        token.ifPresent(t -> state.addToken(null, t));
     }
 
-    boolean isMethodAllowed(String method);
+    public abstract boolean isMethodAllowed(String method);
 
-    Optional<String> getKeyword(String method);
+    public abstract Optional<String> getKeyword(String method);
 
-    Optional<String> getDelimiter(String method);
+    public abstract Optional<String> getDelimiter(String method);
+
+    public abstract Optional<String> getQuoteDelimiter(String method);
 
     @Override
-    default void visit(Frame context, Call call) {
-        if (context.isFirstPosition()) {
-            if (!isMethodAllowed(call.getMethodName().toString())) {
-                throw new IllegalArgumentException("Unknown method: " + call.getMethodName());
+    public void visit(Call call, Translation state) {
+        call.getMethodName().accept(this, state);
+        boolean addDelimiter = false;
+        for (Value value : call.getParameters()) {
+            if (addDelimiter) {
+                addTokenIfPresent(getDelimiter(currentMethod), state);
             }
+            value.accept(this, state);
 
-            getKeyword(call.getMethodName().toString()).ifPresent(this::addToken);
-        } else if (context.isMiddlePosition()) {
-            getDelimiter(call.getMethodName().toString()).ifPresent(this::addToken);
+            addDelimiter = true;
         }
     }
 
     @Override
-    default void visit(Frame context, StringValue value) {
-        addToken(value.toString());
+    public void visit(Name name, Translation state) {
+        if (!isMethodAllowed(name.toString())) {
+            throw new IllegalArgumentException("Unknown method: " + name);
+        }
+        currentMethod = name.toString();
+
+        addTokenIfPresent(getKeyword(name.toString()), state);
+    }
+
+    @Override
+    public void visit(StringValue value, Translation state) {
+        addTokenIfPresent(getQuoteDelimiter(currentMethod), state);
+        state.addToken(null, value.toString());
+        addTokenIfPresent(getQuoteDelimiter(currentMethod), state);
     }
 }

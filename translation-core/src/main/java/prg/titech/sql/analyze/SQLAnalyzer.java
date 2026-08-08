@@ -3,14 +3,12 @@ package prg.titech.sql.analyze;
 import net.sf.jsqlparser.JSQLParserException;
 import net.sf.jsqlparser.parser.CCJSqlParserUtil;
 import net.sf.jsqlparser.parser.ParseException;
-import prg.titech.chain.translate.TokenList;
 
 import java.util.Optional;
 
 public class SQLAnalyzer {
 
-    public static Optional<ParseException> analyze(TokenList tokens) {
-        String rawSQL = tokens.toString();
+    public static Optional<ParseException> analyze(String rawSQL) {
         try {
             CCJSqlParserUtil.parse(rawSQL);
             return Optional.empty();

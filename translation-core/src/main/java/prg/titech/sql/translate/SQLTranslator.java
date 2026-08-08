@@ -1,16 +1,12 @@
 package prg.titech.sql.translate;
 
-import prg.titech.chain.Chain;
-import prg.titech.chain.iter.ChainTraverser;
-import prg.titech.chain.iter.context.Frame;
-import prg.titech.chain.translate.TokenList;
+import prg.titech.chain.translate.Translation;
 import prg.titech.chain.translate.Translator;
-import prg.titech.chain.value.StringValue;
+import prg.titech.chain.visit.Visitable;
 
 import java.util.*;
 
-public class SQLTranslator implements Translator {
-    private final TokenList tokens = new TokenList();
+public class SQLTranslator extends Translator {
     private final static Set<String> allowedMethods;
     private final static Map<String, String> keywordMapping;
 
@@ -36,20 +32,11 @@ public class SQLTranslator implements Translator {
         allowedMethods = m;
     }
 
-    public static String translate(Chain chain) {
-        return translateTokens(chain).toString();
-    }
-
-    public static TokenList translateTokens(Chain chain) {
+    public static Translation translate(Visitable v) {
         SQLTranslator self = new SQLTranslator();
-        ChainTraverser traverser = new ChainTraverser(self, ChainTraverser.Strategy.ALL);
-        chain.accept(traverser);
-        return self.tokens;
-    }
-
-    @Override
-    public TokenList getTokens() {
-        return tokens;
+        Translation translation = new Translation();
+        v.accept(self, translation);
+        return translation;
     }
 
     @Override
@@ -68,12 +55,12 @@ public class SQLTranslator implements Translator {
     }
 
     @Override
-    public void visit(Frame context, StringValue value) {
-        // TODO: Think about how to generalize string literal quotation
-        if (context.getCurrentMethod().equals("value")) {
-            addToken('"' + value.toString() + '"');
+    public Optional<String> getQuoteDelimiter(String method) {
+        if (method.equals("value")) {
+            return Optional.of("\"");
         } else {
-            addToken(value.toString());
+            return Optional.empty();
         }
     }
+
 }
