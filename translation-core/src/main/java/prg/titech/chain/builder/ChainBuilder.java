@@ -25,4 +25,8 @@ public class ChainBuilder {
     public Chain build() {
         return new Chain(calls, range);
     }
+
+    public List<Call> getCalls() {
+        return calls;
+    }
 }

@@ -26,6 +26,10 @@ public class Call implements Node {
         this(methodName, parameters, null);
     }
 
+    public static CallBuilder method(String methodName, TokenRange range) {
+        return new CallBuilder(methodName, range);
+    }
+
     public static CallBuilder method(String methodName) {
         return new CallBuilder(methodName);
     }

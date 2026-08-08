@@ -14,9 +14,13 @@ public class CallBuilder {
     private final List<Value> parameters;
     private @Nullable TokenRange range;
 
-    public CallBuilder(String methodName) {
-        this.methodName = new Name(methodName);
+    public CallBuilder(String methodName, @Nullable TokenRange range) {
+        this.methodName = new Name(methodName, range);
         this.parameters = new ArrayList<>();
+    }
+
+    public CallBuilder(String methodName) {
+        this(methodName, null);
     }
 
     public CallBuilder arg(Value v) {
