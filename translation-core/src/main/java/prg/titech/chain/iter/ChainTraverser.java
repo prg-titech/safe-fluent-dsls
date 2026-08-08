@@ -42,7 +42,7 @@ public class ChainTraverser {
     }
 
     public void traverse(Call call) {
-        context.setCurrentMethod(call.getMethodName());
+        context.setCurrentMethod(call.getMethodName().toString());
         context.descent();
         for (Value v : call.getParameters()) {
             accept(call);

@@ -8,6 +8,10 @@ import java.util.Objects;
 public record Position(int line, int column) implements Comparable<Position> {
     private static final Position HOME = new Position(1, 1);
 
+    public static Position from(com.github.javaparser.Position position) {
+        return new Position(position.line, position.column);
+    }
+
     public boolean isValid() {
         return line >= HOME.line && column >= HOME.column;
     }
@@ -49,6 +53,9 @@ public record Position(int line, int column) implements Comparable<Position> {
         if (this == obj) {
             return true;
         }
+        if (obj == null) {
+            return false;
+        }
         if (obj instanceof Position(int otherLine, int otherColumn)) {
             return line == otherLine && column == otherColumn;
         } else {
@@ -63,6 +70,10 @@ public record Position(int line, int column) implements Comparable<Position> {
 
     @Override
     public @Nonnull String toString() {
+        return String.format("(%d, %d)", line, column);
+    }
+
+    public @Nonnull String toPrettyString() {
         return String.format("line %d, column %d", line, column);
     }
 }

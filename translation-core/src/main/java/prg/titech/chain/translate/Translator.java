@@ -23,13 +23,13 @@ public interface Translator extends ChainVisitor {
     @Override
     default void visit(Frame context, Call call) {
         if (context.isFirstPosition()) {
-            if (!isMethodAllowed(call.getMethodName())) {
+            if (!isMethodAllowed(call.getMethodName().toString())) {
                 throw new IllegalArgumentException("Unknown method: " + call.getMethodName());
             }
 
-            getKeyword(call.getMethodName()).ifPresent(this::addToken);
+            getKeyword(call.getMethodName().toString()).ifPresent(this::addToken);
         } else if (context.isMiddlePosition()) {
-            getDelimiter(call.getMethodName()).ifPresent(this::addToken);
+            getDelimiter(call.getMethodName().toString()).ifPresent(this::addToken);
         }
     }
 

@@ -23,13 +23,12 @@ public class JavaChainSearcher {
     public static List<Chain> findChains(InputStream input, Set<String> entryMethods) {
         CompilationUnit cu = StaticJavaParser.parse(input);
         List<Chain> foundChains = JavaChainSearchVisitor.findChains(cu);
-        List<Chain> filteredChains = foundChains.stream()
-                .filter(c -> entryMethods.contains(c.getCalls().getFirst().getMethodName()))
+        return foundChains.stream()
+                .filter(c -> entryMethods.contains(c.getCalls().getFirst().getMethodName().toString()))
                 .map(JavaExprReplaceVisitor::replaceIn)
                 .filter(Optional::isPresent)
                 .map(Optional::get)
                 .toList();
-        return filteredChains;
     }
 
     public static Chain expectChain(Node n) throws NoSuchElementException {

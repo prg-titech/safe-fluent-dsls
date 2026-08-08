@@ -55,9 +55,9 @@ public record Query(
         }
         ChainBuilder result = Chain.builder()
                 .call(select.build())
-                .call(Call.method("from").arg(source));
+                .call(Call.method("from").arg(source).build());
         if (whereClause != null) {
-            result.call(Call.method("where").arg(whereClause.raw()));
+            result.call(Call.method("where").arg(whereClause.raw()).build());
         }
         result.call(Call.method("build").build());
         return result.build();

@@ -2,6 +2,7 @@ package prg.titech.chain.visit;
 
 import prg.titech.chain.Call;
 import prg.titech.chain.Chain;
+import prg.titech.chain.Name;
 import prg.titech.chain.Value;
 import prg.titech.chain.value.JavaExprValue;
 import prg.titech.chain.value.StringValue;
@@ -18,9 +19,14 @@ public class ModifyingVisitor<S> implements GenericVisitor<Visitable, S> {
 
     @Override
     public Visitable visit(Call call, S state) {
-        String methodName = call.getMethodName();
+        Name methodName = (Name) call.getMethodName().accept(this, state);
         List<Value> parameters = modifyList(call.getParameters(), state);
         return new Call(methodName, parameters);
+    }
+
+    @Override
+    public Visitable visit(Name name, S state) {
+        return name;
     }
 
     @Override

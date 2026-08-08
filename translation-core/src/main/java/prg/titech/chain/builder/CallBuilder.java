@@ -1,14 +1,22 @@
 package prg.titech.chain.builder;
 
+import jakarta.annotation.Nullable;
 import prg.titech.chain.Call;
+import prg.titech.chain.Name;
 import prg.titech.chain.Value;
+import prg.titech.chain.token.TokenRange;
 
 import java.util.ArrayList;
+import java.util.List;
 
-public class CallBuilder extends Call {
+public class CallBuilder {
+    private final Name methodName;
+    private final List<Value> parameters;
+    private @Nullable TokenRange range;
 
     public CallBuilder(String methodName) {
-        super(methodName, new ArrayList<>());
+        this.methodName = new Name(methodName);
+        this.parameters = new ArrayList<>();
     }
 
     public CallBuilder arg(Value v) {
@@ -21,7 +29,12 @@ public class CallBuilder extends Call {
         return this;
     }
 
-    public Call build() {
+    public CallBuilder range(TokenRange range) {
+        this.range = range;
         return this;
+    }
+
+    public Call build() {
+        return new Call(methodName, parameters, range);
     }
 }

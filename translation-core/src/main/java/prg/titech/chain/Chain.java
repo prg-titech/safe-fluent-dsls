@@ -1,19 +1,28 @@
 package prg.titech.chain;
 
+import jakarta.annotation.Nullable;
 import prg.titech.chain.builder.ChainBuilder;
 import prg.titech.chain.iter.ChainTraverser;
 import prg.titech.chain.iter.context.Frame;
+import prg.titech.chain.token.TokenRange;
 import prg.titech.chain.visit.ChainVisitor;
 import prg.titech.chain.visit.GenericVisitor;
 import prg.titech.chain.visit.PrettyPrintVisitor;
 
 import java.util.List;
+import java.util.Optional;
 
 public class Chain implements Value {
     protected final List<Call> calls;
+    private final @Nullable TokenRange range;
+
+    public Chain(List<Call> calls, @Nullable TokenRange range) {
+        this.calls = calls;
+        this.range = range;
+    }
 
     public Chain(List<Call> calls) {
-        this.calls = calls;
+        this(calls, null);
     }
 
     public static ChainBuilder builder() {
@@ -40,5 +49,10 @@ public class Chain implements Value {
     @Override
     public String toString() {
         return PrettyPrintVisitor.prettyPrint(this);
+    }
+
+    @Override
+    public Optional<TokenRange> getTokenRange() {
+        return Optional.ofNullable(range);
     }
 }

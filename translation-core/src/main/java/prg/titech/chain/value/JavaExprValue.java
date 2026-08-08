@@ -5,8 +5,11 @@ import jakarta.annotation.Nonnull;
 import prg.titech.chain.Value;
 import prg.titech.chain.iter.ChainTraverser;
 import prg.titech.chain.iter.context.Frame;
+import prg.titech.chain.token.TokenRange;
 import prg.titech.chain.visit.ChainVisitor;
 import prg.titech.chain.visit.GenericVisitor;
+
+import java.util.Optional;
 
 public record JavaExprValue(Expression inner) implements Value {
 
@@ -28,5 +31,10 @@ public record JavaExprValue(Expression inner) implements Value {
     @Override
     public @Nonnull String toString() {
         return inner.toString();
+    }
+
+    @Override
+    public Optional<TokenRange> getTokenRange() {
+        return inner.getTokenRange().map(TokenRange::from);
     }
 }
