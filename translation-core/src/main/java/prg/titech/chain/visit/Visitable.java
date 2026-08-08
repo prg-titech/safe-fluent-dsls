@@ -8,5 +8,7 @@ public interface Visitable {
 
     void accept(Frame context, ChainVisitor visitor);
 
+    <S> void accept(VoidVisitor<S> visitor, S state);
+
     <R, S> R accept(GenericVisitor<R, S> visitor, S state);
 }

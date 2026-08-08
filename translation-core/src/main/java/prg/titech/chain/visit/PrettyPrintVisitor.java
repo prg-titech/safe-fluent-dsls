@@ -2,63 +2,57 @@ package prg.titech.chain.visit;
 
 import prg.titech.chain.Call;
 import prg.titech.chain.Chain;
-import prg.titech.chain.iter.ChainTraverser;
-import prg.titech.chain.iter.context.Frame;
+import prg.titech.chain.Name;
 import prg.titech.chain.value.JavaExprValue;
 import prg.titech.chain.value.StringValue;
 
-public class PrettyPrintVisitor implements ChainVisitor {
-    private final StringBuilder sb = new StringBuilder();
-    private final boolean doIndent;
+import java.util.List;
 
-    private PrettyPrintVisitor(boolean doIndent) {
-        this.doIndent = doIndent;
-    }
+public class PrettyPrintVisitor implements VoidVisitor<StringBuilder> {
 
-    public static String prettyPrint(Chain chain) {
-        return prettyPrint(chain, false);
-    }
-
-    public static String prettyPrint(Chain chain, boolean doIndent) {
-        PrettyPrintVisitor self = new PrettyPrintVisitor(doIndent);
-        ChainTraverser traverser = new ChainTraverser(self, ChainTraverser.Strategy.ALL);
-        traverser.traverse(chain);
-        return self.sb.toString();
+    public static String prettyPrint(Visitable v) {
+        PrettyPrintVisitor self = new PrettyPrintVisitor();
+        StringBuilder sb = new StringBuilder();
+        v.accept(self, sb);
+        return sb.toString();
     }
 
     @Override
-    public void visit(Frame context, Chain chain) {
-        if (context.isMiddlePosition()) {
-            if (doIndent) {
-                sb.append('\n');
+    public void visit(Chain chain, StringBuilder state) {
+        printList(chain.getCalls(), ".", state);
+    }
+
+    @Override
+    public void visit(Call call, StringBuilder state) {
+        call.getMethodName().accept(this, state);
+        state.append('(');
+        printList(call.getParameters(), ", ", state);
+        state.append(')');
+    }
+
+    @Override
+    public void visit(Name name, StringBuilder state) {
+        state.append(name.toString());
+    }
+
+    @Override
+    public void visit(StringValue value, StringBuilder state) {
+        state.append(value.toQuotedString("\""));
+    }
+
+    @Override
+    public void visit(JavaExprValue value, StringBuilder state) {
+        state.append(value.toString());
+    }
+
+    private <T extends Visitable> void printList(List<T> list, CharSequence delimiter, StringBuilder state) {
+        boolean addDelimiter = false;
+        for (T t : list) {
+            if (addDelimiter) {
+                state.append(delimiter);
             }
-            sb.append('.');
+            t.accept(this, state);
+            addDelimiter = true;
         }
-    }
-
-    @Override
-    public void visit(Frame context, Call call) {
-        if (context.isFirstPosition()) {
-            sb.append(call.getMethodName());
-            sb.append('(');
-        }
-        if (context.isLastPosition()) {
-            sb.append(')');
-        }
-        if (context.isMiddlePosition()) {
-            sb.append(", ");
-        }
-    }
-
-    @Override
-    public void visit(Frame context, StringValue value) {
-        sb.append('"');
-        sb.append(value.toString().replaceAll("\"", "\\\\\""));
-        sb.append('"');
-    }
-
-    @Override
-    public void visit(Frame context, JavaExprValue expr) {
-        sb.append(expr.toString());
     }
 }

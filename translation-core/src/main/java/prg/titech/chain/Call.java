@@ -7,6 +7,7 @@ import prg.titech.chain.iter.context.Frame;
 import prg.titech.chain.token.TokenRange;
 import prg.titech.chain.visit.ChainVisitor;
 import prg.titech.chain.visit.GenericVisitor;
+import prg.titech.chain.visit.VoidVisitor;
 
 import java.util.List;
 import java.util.Optional;
@@ -50,6 +51,11 @@ public class Call implements Node {
     @Override
     public void accept(Frame context, ChainVisitor visitor) {
         visitor.visit(context, this);
+    }
+
+    @Override
+    public <S> void accept(VoidVisitor<S> visitor, S state) {
+        visitor.visit(this, state);
     }
 
     @Override
