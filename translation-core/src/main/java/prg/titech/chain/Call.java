@@ -2,10 +2,7 @@ package prg.titech.chain;
 
 import jakarta.annotation.Nullable;
 import prg.titech.chain.builder.CallBuilder;
-import prg.titech.chain.iter.ChainTraverser;
-import prg.titech.chain.iter.context.Frame;
 import prg.titech.chain.token.TokenRange;
-import prg.titech.chain.visit.ChainVisitor;
 import prg.titech.chain.visit.GenericVisitor;
 import prg.titech.chain.visit.VoidVisitor;
 
@@ -41,16 +38,6 @@ public class Call implements Node {
 
     @SuppressWarnings("unused") public List<Value> getParameters() {
         return parameters;
-    }
-
-    @Override
-    public void accept(ChainTraverser traverser) {
-        traverser.traverse(this);
-    }
-
-    @Override
-    public void accept(Frame context, ChainVisitor visitor) {
-        visitor.visit(context, this);
     }
 
     @Override

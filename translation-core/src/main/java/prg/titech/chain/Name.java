@@ -1,10 +1,7 @@
 package prg.titech.chain;
 
 import jakarta.annotation.Nullable;
-import prg.titech.chain.iter.ChainTraverser;
-import prg.titech.chain.iter.context.Frame;
 import prg.titech.chain.token.TokenRange;
-import prg.titech.chain.visit.ChainVisitor;
 import prg.titech.chain.visit.GenericVisitor;
 import prg.titech.chain.visit.VoidVisitor;
 
@@ -26,16 +23,6 @@ public class Name implements Node {
     @Override
     public Optional<TokenRange> getTokenRange() {
         return Optional.ofNullable(range);
-    }
-
-    @Override
-    public void accept(ChainTraverser traverser) {
-        throw new UnsupportedOperationException("Name nodes do not support ChainTraverser");
-    }
-
-    @Override
-    public void accept(Frame context, ChainVisitor visitor) {
-        throw new UnsupportedOperationException("Name nodes do not support ChainVisitor");
     }
 
     @Override
