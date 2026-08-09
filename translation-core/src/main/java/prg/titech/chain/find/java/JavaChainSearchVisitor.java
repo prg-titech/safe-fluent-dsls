@@ -8,7 +8,6 @@ import prg.titech.chain.Call;
 import prg.titech.chain.Chain;
 import prg.titech.chain.builder.CallBuilder;
 import prg.titech.chain.token.Token;
-import prg.titech.chain.token.TokenRange;
 import prg.titech.chain.value.JavaExprValue;
 
 import java.util.List;
@@ -39,15 +38,7 @@ public class JavaChainSearchVisitor extends VoidVisitorAdapter<JavaChainSearchSt
         method.getComment().ifPresent(c -> c.accept(this, state));
 
         CallBuilder currentCall = Call
-                .method(method.getNameAsString(), method.getName().getTokenRange().map(TokenRange::from).orElse(null));
-
-        // The token range of a call is NOT equal to method#getTokenRange(), because that would include the entire
-        // expression before the "."!
-        Token callBeginToken = method.getName().getTokenRange().map(r -> Token.from(r.getBegin())).orElse(null);
-        Token callEndToken = method.getTokenRange().map(r -> Token.from(r.getEnd())).orElse(null);
-        if (callBeginToken != null && callEndToken != null) {
-            currentCall.range(new TokenRange(callBeginToken, callEndToken));
-        }
+                .method(method.getNameAsString(), method.getName().getTokenRange().map(r -> Token.from(r.getBegin())).orElse(null));
 
         for (Expression e : method.getArguments()) {
             currentCall.arg(new JavaExprValue(e));

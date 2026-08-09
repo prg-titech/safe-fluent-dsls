@@ -3,7 +3,7 @@ package prg.titech.chain.find.java;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.StringLiteralExpr;
 import prg.titech.chain.Chain;
-import prg.titech.chain.token.TokenRange;
+import prg.titech.chain.token.Token;
 import prg.titech.chain.value.JavaExprValue;
 import prg.titech.chain.value.StringValue;
 import prg.titech.chain.visit.ModifyingVisitor;
@@ -30,7 +30,8 @@ public class JavaExprReplaceVisitor extends ModifyingVisitor<AtomicBoolean> {
         Expression inner = value.inner();
         if (inner.isStringLiteralExpr()) {
             StringLiteralExpr realInner = inner.asStringLiteralExpr();
-            return new StringValue(realInner.asString(), realInner.getTokenRange().map(TokenRange::from).orElse(null));
+            Token sourceToken = realInner.getTokenRange().map(r -> Token.from(r.getBegin()).subToken(1, -1)).orElse(null);
+            return new StringValue(realInner.asString(), sourceToken);
         } else if (inner.isMethodCallExpr()) {
             Chain subChain = JavaChainSearcher.expectChain(inner);
             Optional<Chain> replacedSubChain = JavaExprReplaceVisitor.replaceIn(subChain);

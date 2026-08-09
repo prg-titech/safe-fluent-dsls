@@ -1,24 +1,30 @@
 package prg.titech.chain.value;
 
 import jakarta.annotation.Nullable;
+import prg.titech.chain.Leaf;
 import prg.titech.chain.Value;
-import prg.titech.chain.token.TokenRange;
+import prg.titech.chain.token.Token;
 import prg.titech.chain.visit.GenericVisitor;
 import prg.titech.chain.visit.VoidVisitor;
 
-import java.util.Optional;
+import java.util.List;
 
-public class StringValue implements Value {
+public class StringValue implements Value, Leaf {
     private final String inner;
-    private @Nullable TokenRange range;
+    private List<Token> sourceTokens;
 
-    public StringValue(String inner, @Nullable TokenRange range) {
+    public StringValue(String inner, @Nullable Token sourceToken) {
+        this(inner, sourceToken == null ? List.of() : List.of(sourceToken));
+    }
+
+    public StringValue(String inner, List<Token> sourceTokens) {
         this.inner = inner;
-        this.range = range;
+        this.sourceTokens = sourceTokens;
     }
 
     public StringValue(String inner) {
-        this(inner, null);
+        this.inner = inner;
+        this.sourceTokens = List.of();
     }
 
     @Override
@@ -41,11 +47,8 @@ public class StringValue implements Value {
     }
 
     @Override
-    public Optional<TokenRange> getTokenRange() {
-        return Optional.ofNullable(range);
+    public List<Token> getSourceTokens() {
+        return sourceTokens;
     }
 
-    public void setTokenRange(@Nullable TokenRange range) {
-        this.range = range;
-    }
 }

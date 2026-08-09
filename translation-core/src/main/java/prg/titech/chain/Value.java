@@ -1,16 +1,19 @@
 package prg.titech.chain;
 
-import prg.titech.chain.token.TokenRange;
+import prg.titech.chain.token.Token;
 import prg.titech.chain.value.StringValue;
+import prg.titech.chain.visit.Visitable;
 
-public interface Value extends Node {
+import java.util.List;
+
+public interface Value extends Visitable {
 
     static Value of(String s) {
         return new StringValue(s);
     }
 
-    static Value of(String s, TokenRange range) {
-        return new StringValue(s, range);
+    static Value of(String s, List<Token> sourceTokens) {
+        return new StringValue(s, sourceTokens);
     }
 
 }

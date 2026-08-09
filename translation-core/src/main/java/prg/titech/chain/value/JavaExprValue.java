@@ -25,7 +25,6 @@ public record JavaExprValue(Expression inner) implements Value {
         return inner.toString();
     }
 
-    @Override
     public Optional<TokenRange> getTokenRange() {
         return inner.getTokenRange().map(TokenRange::from);
     }

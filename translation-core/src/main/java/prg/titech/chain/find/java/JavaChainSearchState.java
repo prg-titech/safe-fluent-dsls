@@ -2,8 +2,6 @@ package prg.titech.chain.find.java;
 
 import prg.titech.chain.Chain;
 import prg.titech.chain.builder.ChainBuilder;
-import prg.titech.chain.token.Token;
-import prg.titech.chain.token.TokenRange;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -35,9 +33,7 @@ public class JavaChainSearchState {
     }
 
     public void completeChain() {
-        Token rangeBegin = getCurrent().getCalls().getFirst().getTokenRange().orElseThrow().begin();
-        Token rangeEnd = getCurrent().getCalls().getLast().getTokenRange().orElseThrow().end();
-        aggregate.add(getCurrent().range(new TokenRange(rangeBegin, rangeEnd)).build());
+        aggregate.add(getCurrent().build());
         context.getLast().inner = Chain.builder();
     }
 

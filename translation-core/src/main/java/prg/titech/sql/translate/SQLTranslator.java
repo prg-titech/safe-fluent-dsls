@@ -45,21 +45,21 @@ public class SQLTranslator extends Translator {
     }
 
     @Override
-    public Optional<String> getKeyword(String method) {
-        return Optional.ofNullable(keywordMapping.get(method));
+    public String getKeyword(String method) {
+        return keywordMapping.getOrDefault(method, "");
     }
 
     @Override
-    public Optional<String> getDelimiter(String method) {
-        return Optional.of(",");
+    public String getDelimiter(String method) {
+        return ",";
     }
 
     @Override
-    public Optional<String> getQuoteDelimiter(String method) {
+    public String getQuoteDelimiter(String method) {
         if (method.equals("value")) {
-            return Optional.of("\"");
+            return "\"";
         } else {
-            return Optional.empty();
+            return "";
         }
     }
 

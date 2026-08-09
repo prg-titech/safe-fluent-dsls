@@ -1,12 +1,14 @@
 package prg.titech.chain.token;
 
 import com.github.javaparser.JavaToken;
+import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.IntStream;
 
-public class Token {
+public class Token implements CharSequence {
     private final String image;
 
     private @Nullable Range range;
@@ -77,9 +79,56 @@ public class Token {
         return Optional.ofNullable(nextToken);
     }
 
+    public Token subToken(int start, int end) {
+        if (start < 0) {
+            start += length();
+        }
+        if (end < 0) {
+            end += length();
+        }
+        return (Token) subSequence(start, end);
+    }
+
     @Override
-    public String toString() {
+    public int length() {
+        return image.length();
+    }
+
+    @Override
+    public char charAt(int index) {
+        return image.charAt(index);
+    }
+
+    @Override
+    public boolean isEmpty() {
+        return image.isEmpty();
+    }
+
+    @Override
+    public @Nonnull CharSequence subSequence(int start, int end) {
+        String newImage = image.substring(start, end);
+        if (range == null) {
+            return new Token(newImage);
+        }
+
+        Position newStart = range.begin().right(start);
+        Position newEnd = range.end().left(length() - end);
+        return new Token(newImage, new Range(newStart, newEnd));
+    }
+
+    @Override
+    public @Nonnull String toString() {
         return String.format("<\"%s\", %s>", image.replace("\"", "\\\""), getRange().map(Object::toString).orElse("N/A"));
+    }
+
+    @Override
+    public @Nonnull IntStream chars() {
+        return image.chars();
+    }
+
+    @Override
+    public @Nonnull IntStream codePoints() {
+        return image.codePoints();
     }
 
     @Override
@@ -101,4 +150,6 @@ public class Token {
     public int hashCode() {
         return Objects.hash(image, range);
     }
+
+
 }

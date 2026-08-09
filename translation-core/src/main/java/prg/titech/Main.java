@@ -22,9 +22,8 @@ public class Main {
         List<Chain> foundChains = JavaChainSearcher.findChains(testPath, Set.of("select"));
         for (Chain c : foundChains) {
             System.out.println("Found chain: " + c);
-            System.out.println("Tokens: " + c.getTokenRange().orElseThrow());
             Translation translation = SQLTranslator.translate(c);
-            System.out.println("Translation: " + translation);
+            System.out.println("Translation Details:\n" + translation.toDebugString());
             Optional<ParseException> parseError = SQLAnalyzer.analyze(translation.toString());
             parseError.ifPresentOrElse(
                     e -> {

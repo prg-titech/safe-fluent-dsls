@@ -1,5 +1,8 @@
 package prg.titech.chain.translate;
 
+import com.google.common.collect.Streams;
+import prg.titech.chain.token.Token;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,6 +22,17 @@ public class Translation {
 
     @Override
     public String toString() {
-        return String.join(" ", targetTokens);
+        return String.join("", targetTokens);
+    }
+
+    public String toDebugString() {
+        StringBuilder sb = new StringBuilder();
+        Streams.forEachPair(sourceTokens.stream(), targetTokens.stream(), (s, t) -> {
+            sb.append(s);
+            sb.append(" -> \"");
+            sb.append(t);
+            sb.append("\"\n");
+        });
+        return sb.toString();
     }
 }

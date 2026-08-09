@@ -76,4 +76,12 @@ public record Position(int line, int column) implements Comparable<Position> {
     public @Nonnull String toPrettyString() {
         return String.format("line %d, column %d", line, column);
     }
+
+    public Position right(int toAdd) {
+        return this.plus(new Position(0, toAdd));
+    }
+
+    public Position left(int toSubtract) {
+        return this.minus(new Position(0, toSubtract));
+    }
 }

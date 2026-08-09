@@ -1,28 +1,27 @@
 package prg.titech.chain;
 
-import jakarta.annotation.Nullable;
-import prg.titech.chain.token.TokenRange;
+import prg.titech.chain.token.Token;
 import prg.titech.chain.visit.GenericVisitor;
 import prg.titech.chain.visit.VoidVisitor;
 
-import java.util.Optional;
+import java.util.List;
 
-public class Name implements Node {
+public class Name implements Leaf {
     private final String name;
-    private final @Nullable TokenRange range;
+    private final List<Token> sourceTokens;
 
-    public Name(String name, @Nullable TokenRange range) {
+    public Name(String name, List<Token> sourceTokens) {
         this.name = name;
-        this.range = range;
+        this.sourceTokens = sourceTokens;
     }
 
     public Name(String name) {
-        this(name, null);
+        this(name, List.of());
     }
 
     @Override
-    public Optional<TokenRange> getTokenRange() {
-        return Optional.ofNullable(range);
+    public List<Token> getSourceTokens() {
+        return sourceTokens;
     }
 
     @Override
