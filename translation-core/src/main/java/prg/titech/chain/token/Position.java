@@ -6,7 +6,7 @@ import org.jspecify.annotations.NonNull;
 import java.util.Objects;
 
 public record Position(int line, int column) implements Comparable<Position> {
-    private static final Position HOME = new Position(1, 1);
+    public static final Position HOME = new Position(1, 1);
 
     public static Position from(com.github.javaparser.Position position) {
         return new Position(position.line, position.column);

@@ -1,23 +1,33 @@
 package prg.titech.chain.translate;
 
-import com.google.common.collect.Streams;
+import jakarta.annotation.Nullable;
+import prg.titech.chain.token.Position;
+import prg.titech.chain.token.Range;
 import prg.titech.chain.token.Token;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class Translation {
-    private final List<String> targetTokens;
-    private final List<List<Token>> sourceTokens;
+    private final List<Token> targetTokens;
+    private final Map<Token, List<Token>> sourceTokens;
+    private Position currentCursorPosition = Position.HOME;
 
     public Translation() {
         this.targetTokens = new ArrayList<>();
-        this.sourceTokens = new ArrayList<>();
+        this.sourceTokens = new HashMap<>();
     }
 
-    public void addToken(List<Token> source, String target) {
-        this.targetTokens.add(target);
-        this.sourceTokens.add(source);
+    public void addToken(@Nullable List<Token> source, String target) {
+        Range targetRange = new Range(currentCursorPosition, currentCursorPosition.right(target.length() - 1));
+        currentCursorPosition = targetRange.end().right(1);
+        Token targetToken = new Token(target, targetRange);
+        this.targetTokens.add(targetToken);
+        if (source != null) {
+            this.sourceTokens.put(targetToken, source);
+        }
     }
 
     @Override
@@ -27,11 +37,13 @@ public class Translation {
 
     public String toDebugString() {
         StringBuilder sb = new StringBuilder();
-        Streams.forEachPair(sourceTokens.stream(), targetTokens.stream(), (s, t) -> {
-            sb.append(s);
-            sb.append(" -> \"");
-            sb.append(t);
-            sb.append("\"\n");
+        sb.append(targetTokens);
+        sb.append("\n");
+        sourceTokens.forEach((key, value) -> {
+            sb.append(key.toDebugString());
+            sb.append(" -> ");
+            sb.append(value.stream().map(Token::toDebugString).toList());
+            sb.append("\n");
         });
         return sb.toString();
     }

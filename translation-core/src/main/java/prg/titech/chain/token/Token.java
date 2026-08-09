@@ -118,6 +118,10 @@ public class Token implements CharSequence {
 
     @Override
     public @Nonnull String toString() {
+        return image;
+    }
+
+    public String toDebugString() {
         return String.format("<\"%s\", %s>", image.replace("\"", "\\\""), getRange().map(Object::toString).orElse("N/A"));
     }
 
