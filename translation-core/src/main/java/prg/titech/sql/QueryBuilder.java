@@ -64,7 +64,7 @@ package prg.titech.sql;
         return this;
     }
 
-    public QueryBuilder value(String v) {
+    public QueryBuilder value(@Quote("\"") String v) {
         whereClause.value(v);
         return this;
     }

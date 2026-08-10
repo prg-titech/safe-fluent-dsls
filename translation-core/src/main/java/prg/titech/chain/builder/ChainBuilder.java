@@ -4,12 +4,10 @@ import prg.titech.chain.Call;
 import prg.titech.chain.Chain;
 
 import java.util.ArrayList;
+import java.util.List;
 
-public class ChainBuilder extends Chain {
-
-    public ChainBuilder() {
-        super(new ArrayList<>());
-    }
+public class ChainBuilder {
+    private final List<Call> calls = new ArrayList<>();
 
     public ChainBuilder call(Call c) {
         calls.add(c);
@@ -17,6 +15,10 @@ public class ChainBuilder extends Chain {
     }
 
     public Chain build() {
-        return this;
+        return new Chain(calls);
+    }
+
+    public List<Call> getCalls() {
+        return calls;
     }
 }

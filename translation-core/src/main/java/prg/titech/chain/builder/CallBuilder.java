@@ -1,14 +1,24 @@
 package prg.titech.chain.builder;
 
 import prg.titech.chain.Call;
+import prg.titech.chain.Name;
 import prg.titech.chain.Value;
+import prg.titech.chain.token.Token;
 
 import java.util.ArrayList;
+import java.util.List;
 
-public class CallBuilder extends Call {
+public class CallBuilder {
+    private final Name methodName;
+    private final List<Value> parameters;
+
+    public CallBuilder(String methodName, List<Token> sourceTokens) {
+        this.methodName = new Name(methodName, sourceTokens);
+        this.parameters = new ArrayList<>();
+    }
 
     public CallBuilder(String methodName) {
-        super(methodName, new ArrayList<>());
+        this(methodName, null);
     }
 
     public CallBuilder arg(Value v) {
@@ -22,6 +32,6 @@ public class CallBuilder extends Call {
     }
 
     public Call build() {
-        return this;
+        return new Call(methodName, parameters);
     }
 }

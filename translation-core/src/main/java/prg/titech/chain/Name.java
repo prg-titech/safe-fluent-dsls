@@ -1,25 +1,27 @@
 package prg.titech.chain;
 
-import prg.titech.chain.builder.ChainBuilder;
+import prg.titech.chain.token.Token;
 import prg.titech.chain.visit.GenericVisitor;
-import prg.titech.chain.visit.PrettyPrintVisitor;
 import prg.titech.chain.visit.VoidVisitor;
 
 import java.util.List;
 
-public class Chain implements Value {
-    protected final List<Call> calls;
+public class Name implements Leaf {
+    private final String name;
+    private final List<Token> sourceTokens;
 
-    public Chain(List<Call> calls) {
-        this.calls = calls;
+    public Name(String name, List<Token> sourceTokens) {
+        this.name = name;
+        this.sourceTokens = sourceTokens;
     }
 
-    public static ChainBuilder builder() {
-        return new ChainBuilder();
+    public Name(String name) {
+        this(name, List.of());
     }
 
-    public List<Call> getCalls() {
-        return calls;
+    @Override
+    public List<Token> getSourceTokens() {
+        return sourceTokens;
     }
 
     @Override
@@ -34,6 +36,6 @@ public class Chain implements Value {
 
     @Override
     public String toString() {
-        return PrettyPrintVisitor.prettyPrint(this);
+        return name;
     }
 }
