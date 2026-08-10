@@ -1,8 +1,8 @@
 package prg.titech;
 
-import net.sf.jsqlparser.parser.ParseException;
 import prg.titech.chain.Chain;
 import prg.titech.chain.find.java.JavaChainSearcher;
+import prg.titech.chain.projection.ParseError;
 import prg.titech.chain.translate.Translation;
 import prg.titech.sql.analyze.SQLAnalyzer;
 import prg.titech.sql.translate.SQLTranslator;
@@ -11,7 +11,6 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 
 public class Main {
@@ -24,14 +23,10 @@ public class Main {
             System.out.println("Found chain: " + c);
             Translation translation = SQLTranslator.translate(c);
             System.out.println("Translation Details:\n" + translation.toDebugString());
-            Optional<ParseException> parseError = SQLAnalyzer.analyze(translation.toString());
-            parseError.ifPresentOrElse(
-                    e -> {
-                        System.out.println("Parse error found!");
-                        System.out.println("\t" + e);
-                    },
-                    () -> System.out.println("No errors found!")
-            );
+            List<ParseError> errors = SQLAnalyzer.parse(translation);
+            for (ParseError e : errors) {
+                System.out.println("Got parse error at " + e.getTargetToken().toDebugString() + ":\n" + e.getMessage());
+            }
             System.out.println("---------------");
         }
     }

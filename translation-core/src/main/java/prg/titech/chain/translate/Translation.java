@@ -30,6 +30,26 @@ public class Translation {
         }
     }
 
+    public List<Token> findSourceOfOrAfter(Token target) {
+        if (sourceTokens.containsKey(target)) {
+            return sourceTokens.get(target);
+        }
+        List<Token> result = new ArrayList<>();
+        for (Token t : targetTokens) {
+            if (t.getRange().orElseThrow().isBefore(target.getRange().orElseThrow())) {
+                continue;
+            }
+
+            if (sourceTokens.containsKey(t)) {
+                result.addAll(sourceTokens.get(t));
+                if (t.getRange().orElseThrow().end().compareTo(target.getRange().orElseThrow().end()) >= 0) {
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
     @Override
     public String toString() {
         return String.join("", targetTokens);
