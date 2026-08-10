@@ -29,9 +29,7 @@ public class SQLAnalyzer {
     public static List<ParseError> parse(Translation translation) {
         return analyze(translation.toString()).stream().map(p -> {
             Token targetToken = TokenUtil.fromSqlToken(p.currentToken.next);
-            System.out.println("Parse Error occurred when consuming: " + targetToken.toDebugString());
             List<Token> sourceTokens = translation.findSourceOfOrAfter(targetToken);
-            System.out.println("Source tokens identified: " + sourceTokens.stream().map(Token::toDebugString).toList());
             return new ParseError(sourceTokens.getFirst(), targetToken, p.getMessage());
         }).toList();
     }

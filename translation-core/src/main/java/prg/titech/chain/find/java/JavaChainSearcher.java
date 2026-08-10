@@ -5,8 +5,7 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.Node;
 import prg.titech.chain.Chain;
 
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -15,6 +14,16 @@ import java.util.Optional;
 import java.util.Set;
 
 public class JavaChainSearcher {
+
+    public static List<Chain> findChains(File file, Set<String> entryMethods) throws IOException {
+        try (FileInputStream input = new FileInputStream(file)) {
+            return findChains(input, entryMethods);
+        }
+    }
+
+    public static List<Chain> findChains(String input, Set<String> entryMethods) {
+        return findChains(new ByteArrayInputStream(input.getBytes()), entryMethods);
+    }
 
     public static List<Chain> findChains(Path path, Set<String> entryMethods) throws IOException {
         return findChains(Files.newInputStream(path), entryMethods);
