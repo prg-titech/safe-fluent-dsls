@@ -2,6 +2,7 @@
 mod ast;
 mod sql;
 mod chain;
+mod tree;
 
 use crate::ast::Chain;
 use crate::chain::ChainParser;
