@@ -1,25 +1,44 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
-export function activate(context: vscode.ExtensionContext) {
+const tokenTypes = ['keyword'];
+const tokenModifiers: string[] = [];
+const legend = new vscode.SemanticTokensLegend(tokenTypes, tokenModifiers);
 
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "fluent-api-scanner" is now active!');
-
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('fluent-api-scanner.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from Fluent API Scanner!');
+const provider: vscode.DocumentSemanticTokensProvider = {
+  provideDocumentSemanticTokens(
+    document: vscode.TextDocument
+  ): vscode.ProviderResult<vscode.SemanticTokens> {
+    // analyze the document and return semantic tokens
+	const selectPositions: vscode.Position[] = [];
+	document.getText().split("\n").forEach((line, index) => {
+		const splitPoints: number[] = line.split("select").map(s => s.length);
+		splitPoints.pop();
+		let currentColumn = 0;
+		splitPoints.forEach(length => {
+			currentColumn += length;
+			selectPositions.push(new vscode.Position(index, currentColumn));
+			currentColumn += 6;
+		});
 	});
 
-	context.subscriptions.push(disposable);
+    const tokensBuilder = new vscode.SemanticTokensBuilder(legend);
+	selectPositions.forEach(position => {
+		tokensBuilder.push(
+			new vscode.Range(position, new vscode.Position(position.line, position.character + 6)),
+			"keyword",
+			[]
+		);
+	});
+    return tokensBuilder.build();
+  }
+};
+
+const selector = { language: 'java', scheme: 'file' }; // register for all Java documents from the local file system
+
+vscode.languages.registerDocumentSemanticTokensProvider(selector, provider, legend);
+
+export function activate(context: vscode.ExtensionContext) {
+	console.log('Congratulations, your extension "fluent-api-scanner" is now active!');
 }
 
 // This method is called when your extension is deactivated
