@@ -25,7 +25,7 @@ public class Main {
             System.out.println("Translation Details:\n" + translation.toDebugString());
             List<ParseError> errors = SQLAnalyzer.parse(translation);
             for (ParseError e : errors) {
-                System.out.println("Got parse error at " + e.getTargetToken().toDebugString() + ":\n" + e.getMessage());
+                System.out.println("Got parse error at " + e.targetToken().toDebugString() + ":\n" + e.message());
             }
             System.out.println("---------------");
         }

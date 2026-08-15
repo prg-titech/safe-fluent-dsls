@@ -1,19 +1,19 @@
 package prg.titech;
 
 import com.google.common.math.IntMath;
+import jakarta.annotation.Nullable;
 import picocli.CommandLine;
 import prg.titech.chain.Chain;
 import prg.titech.chain.find.java.JavaChainSearcher;
 import prg.titech.chain.projection.ParseError;
 import prg.titech.chain.token.Position;
 import prg.titech.chain.token.Range;
+import prg.titech.cli.SourceFile;
 import prg.titech.sql.analyze.SQLAnalyzer;
 import prg.titech.sql.translate.SQLTranslator;
 
 import java.io.File;
-import java.io.IOException;
 import java.math.RoundingMode;
-import java.nio.file.Files;
 import java.util.List;
 import java.util.Set;
 
@@ -24,8 +24,25 @@ public class Analyzer implements Runnable {
     @CommandLine.Parameters(index = "0")
     File sourceFile;
 
+    @CommandLine.Option(names = {"-i", "--interactive"})
+    boolean isInteractiveModeEnabled;
+
     @Override
     public void run() {
+        try (SourceFile source = SourceFile.fromFile(sourceFile)) {
+            if (isInteractiveModeEnabled) {
+                source.addObserver((previousErrors) -> doTask(source, (List<ParseError>) previousErrors));
+                while (true) {}
+            } else {
+                doTask(source, null);
+            }
+        } catch (Exception e) {
+            System.err.println("Exception occurred: " + e);
+            e.printStackTrace(System.err);
+            System.out.println("Exiting...");
+        }
+
+        /*
         List<String> sourceFile;
         try {
             sourceFile = readFile(this.sourceFile);
@@ -41,7 +58,7 @@ public class Analyzer implements Runnable {
 
         for (ParseError error : parseErrors) {
             System.out.println(reportParseError(error, sourceFile));
-        }
+        }*/
     }
 
     public static void main(String... args) {
@@ -49,12 +66,26 @@ public class Analyzer implements Runnable {
         System.exit(exitCode);
     }
 
-    private List<String> readFile(File file) throws IOException {
-        return Files.readAllLines(file.toPath());
+    private List<ParseError> doTask(SourceFile source, @Nullable List<ParseError> previousErrors) {
+        List<String> lines = source.getLines();
+        List<Chain> foundChains = JavaChainSearcher.findChains(source.toString(), Set.of("select"));
+        List<ParseError> parseErrors = foundChains.stream()
+                .map(SQLTranslator::translate)
+                .flatMap(t -> SQLAnalyzer.parse(t).stream())
+                .toList();
+        List<ParseError> newParseErrors = previousErrors == null ? parseErrors : parseErrors.stream()
+                                                                                 .filter(e -> previousErrors.stream().noneMatch(e::essentiallyEqual))
+                                                                                 .toList();
+
+        for (ParseError error : newParseErrors) {
+            System.out.println(reportParseError(error, lines));
+        }
+        source.release();
+        return parseErrors;
     }
 
     private String reportParseError(ParseError error, List<String> sourceFile) {
-        Range targetRange = error.getSourceToken().getRange().orElseThrow();
+        Range targetRange = error.sourceToken().getRange().orElseThrow();
         int highlightLine = targetRange.begin().line() - Position.HOME.line();
         int highlightBegin = Math.max(0, highlightLine - 2);
         int highlightEnd = Math.min(sourceFile.size() - 1, highlightLine + 2);
@@ -64,7 +95,7 @@ public class Analyzer implements Runnable {
         for (int i = highlightBegin; i <= highlightLine; i++) {
             pasteLine(sb, sourceFile.get(i), i, indexWidth);
         }
-        attachMessageToSection(sb, error.getMessage(), targetRange.begin().column() - Position.HOME.column(), targetRange.end().column() - Position.HOME.column(), indexWidth);
+        attachMessageToSection(sb, error.message(), targetRange.begin().column() - Position.HOME.column(), targetRange.end().column() - Position.HOME.column(), indexWidth);
         for (int i = highlightLine + 1; i <= highlightEnd; i++) {
             pasteLine(sb, sourceFile.get(i), i, indexWidth);
         }

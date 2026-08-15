@@ -8,17 +8,17 @@ public interface Projection {
      * The source code token which is being projected onto.
      * @return The source token belonging to the host language source code.
      */
-    Token getSourceToken();
+    Token sourceToken();
 
     /**
      * The DSL token which is being projected.
      * @return The target token belonging to the DSL translation.
      */
-    Token getTargetToken();
+    Token targetToken();
 
     /**
      * The message which may or may not be projected onto the source token.
      * @return The projection message.
      */
-    String getMessage();
+    String message();
 }
