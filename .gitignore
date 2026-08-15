@@ -26,3 +26,7 @@ chain.rs
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 *.iml
+
+# VSCode Extension
+.vscode
+node_modules
