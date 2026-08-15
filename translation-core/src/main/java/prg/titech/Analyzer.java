@@ -41,24 +41,6 @@ public class Analyzer implements Runnable {
             e.printStackTrace(System.err);
             System.out.println("Exiting...");
         }
-
-        /*
-        List<String> sourceFile;
-        try {
-            sourceFile = readFile(this.sourceFile);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
-        List<Chain> foundChains = JavaChainSearcher.findChains(String.join("\n", sourceFile), Set.of("select"));
-        List<ParseError> parseErrors = foundChains.stream()
-                .map(SQLTranslator::translate)
-                .flatMap(t -> SQLAnalyzer.parse(t).stream())
-                .toList();
-
-        for (ParseError error : parseErrors) {
-            System.out.println(reportParseError(error, sourceFile));
-        }*/
     }
 
     public static void main(String... args) {
