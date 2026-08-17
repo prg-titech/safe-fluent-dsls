@@ -20,10 +20,6 @@ public record Range(Position begin, Position end) {
         return new Range(Position.from(range.begin), Position.from(range.end));
     }
 
-    public boolean isValid() {
-        return begin.isValid() && end.isValid();
-    }
-
     @Override
     public boolean equals(Object obj) {
         if (this == obj) {
@@ -41,10 +37,6 @@ public record Range(Position begin, Position end) {
 
     public boolean isBefore(Range other) {
         return this.end.isBefore(other.begin());
-    }
-
-    public boolean isAfter(Range other) {
-        return this.begin.isAfter(other.end());
     }
 
     @Override

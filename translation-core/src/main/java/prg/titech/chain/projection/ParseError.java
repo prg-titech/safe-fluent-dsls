@@ -1,8 +1,13 @@
 package prg.titech.chain.projection;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import prg.titech.chain.token.Token;
 
-public record ParseError(Token sourceToken, Token targetToken, String message) implements Projection {
+public record ParseError(
+        @JsonProperty("source_token") Token sourceToken,
+        @JsonProperty("target_token") Token targetToken,
+        String message
+) implements Projection {
 
     public boolean essentiallyEqual(ParseError other) {
         if (other == null) {

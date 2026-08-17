@@ -4,7 +4,6 @@ import jakarta.annotation.Nonnull;
 
 import java.util.Iterator;
 import java.util.Objects;
-import java.util.Optional;
 
 public record TokenRange(Token begin, Token end) implements Iterable<Token> {
 
@@ -34,14 +33,6 @@ public record TokenRange(Token begin, Token end) implements Iterable<Token> {
                 return toReturn;
             }
         };
-    }
-
-    public Optional<Range> toRange() {
-        return begin.getRange().flatMap(
-                begin -> end.getRange().map(
-                        end -> new Range(begin.begin(), end.end())
-                )
-        );
     }
 
     @Override

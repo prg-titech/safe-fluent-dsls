@@ -30,23 +30,6 @@ public class LazyToken extends Token {
     }
 
     @Override
-    public boolean hasPreviousToken() {
-        return previousToken != null || unconvertedPreviousToken != null;
-    }
-
-    @Override
-    public Optional<Token> getPreviousToken() {
-        previousToken = useFirstOrConvertSecond(previousToken, unconvertedPreviousToken);
-        unconvertedPreviousToken = null;    // previousToken is now initialized, we don't need this anymore
-        return Optional.ofNullable(previousToken);
-    }
-
-    @Override
-    public boolean hasNextToken() {
-        return nextToken != null || unconvertedNextToken != null;
-    }
-
-    @Override
     public Optional<Token> getNextToken() {
         nextToken = useFirstOrConvertSecond(nextToken, unconvertedNextToken);
         unconvertedNextToken = null;    // nextToken is now initialized, we don't need this anymore

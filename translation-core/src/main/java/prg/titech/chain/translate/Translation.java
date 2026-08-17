@@ -36,13 +36,13 @@ public class Translation {
         }
         List<Token> result = new ArrayList<>();
         for (Token t : targetTokens) {
-            if (t.getRange().orElseThrow().isBefore(target.getRange().orElseThrow())) {
+            if (t.getRange().isBefore(target.getRange())) {
                 continue;
             }
 
             if (sourceTokens.containsKey(t)) {
                 result.addAll(sourceTokens.get(t));
-                if (t.getRange().orElseThrow().end().compareTo(target.getRange().orElseThrow().end()) >= 0) {
+                if (t.getRange().end().compareTo(target.getRange().end()) >= 0) {
                     break;
                 }
             }
