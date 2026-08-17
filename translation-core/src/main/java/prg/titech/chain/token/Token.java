@@ -1,5 +1,6 @@
 package prg.titech.chain.token;
 
+import com.fasterxml.jackson.annotation.*;
 import com.github.javaparser.JavaToken;
 import jakarta.annotation.Nonnull;
 import jakarta.annotation.Nullable;
@@ -8,16 +9,17 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.IntStream;
 
+@JsonIncludeProperties({"image", "range"})
 public class Token implements CharSequence {
     private final String image;
 
-    private @Nullable Range range;
+    private final Range range;
 
     protected @Nullable Token previousToken;
 
     protected @Nullable Token nextToken;
 
-    public Token(String image, @Nullable Range range, Token previousToken, Token nextToken) {
+    public Token(String image, Range range, Token previousToken, Token nextToken) {
         this.image = Objects.requireNonNull(image);
         this.range = range;
         this.previousToken = previousToken;
@@ -34,12 +36,12 @@ public class Token implements CharSequence {
         this(image, range, previousToken, null);
     }
 
-    public Token(String image, Range range) {
-        this(image, range, null, null);
-    }
-
-    public Token(String image) {
-        this(image, null, null, null);
+    @JsonCreator
+    public Token(@JsonProperty("image") String image, @JsonProperty("range") Range range) {
+        this.image = image;
+        this.range = range;
+        this.previousToken = null;
+        this.nextToken = null;
     }
 
     public static Token from(JavaToken token) {
@@ -55,24 +57,8 @@ public class Token implements CharSequence {
         return image;
     }
 
-    public Optional<Range> getRange() {
-        return Optional.ofNullable(range);
-    }
-
-    public void setRange(@Nullable Range range) {
-        this.range = range;
-    }
-
-    public boolean hasPreviousToken() {
-        return previousToken != null;
-    }
-
-    public Optional<Token> getPreviousToken() {
-        return Optional.ofNullable(previousToken);
-    }
-
-    public boolean hasNextToken() {
-        return nextToken != null;
+    public Range getRange() {
+        return range;
     }
 
     public Optional<Token> getNextToken() {
@@ -107,10 +93,6 @@ public class Token implements CharSequence {
     @Override
     public @Nonnull CharSequence subSequence(int start, int end) {
         String newImage = image.substring(start, end);
-        if (range == null) {
-            return new Token(newImage);
-        }
-
         Position newStart = range.begin().right(start);
         Position newEnd = range.end().left(length() - end);
         return new Token(newImage, new Range(newStart, newEnd));
@@ -122,7 +104,7 @@ public class Token implements CharSequence {
     }
 
     public String toDebugString() {
-        return String.format("<\"%s\", %s>", image.replace("\"", "\\\""), getRange().map(Object::toString).orElse("N/A"));
+        return String.format("<\"%s\", %s>", image.replace("\"", "\\\""), getRange());
     }
 
     @Override

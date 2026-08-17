@@ -4,17 +4,24 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Optional;
 
 public class BasicServer {
     public static void main(String[] args) throws Exception {
         Options options = parseOptions(args);
-        HttpServer server = HttpServer.create(new InetSocketAddress(options.port().orElse(8080)), 0);
+        HttpServer server = start(options.port().orElse(8080));
+        System.out.println("BACKEND_PORT " + server.getAddress().getPort());
+    }
+
+    public static HttpServer start(int port) throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/health", new HealthHandler());
+        server.createContext("/analyze", new AnalyzeHandler());
         server.setExecutor(null); // default executor
         server.start();
-        System.out.println("BACKEND_PORT " + server.getAddress().getPort());
+        return server;
     }
 
     private static Options parseOptions(String[] args) {

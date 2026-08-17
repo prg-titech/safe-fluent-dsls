@@ -67,7 +67,7 @@ public class Analyzer implements Runnable {
     }
 
     private String reportParseError(ParseError error, List<String> sourceFile) {
-        Range targetRange = error.sourceToken().getRange().orElseThrow();
+        Range targetRange = error.sourceToken().getRange();
         int highlightLine = targetRange.begin().line() - Position.HOME.line();
         int highlightBegin = Math.max(0, highlightLine - 2);
         int highlightEnd = Math.min(sourceFile.size() - 1, highlightLine + 2);

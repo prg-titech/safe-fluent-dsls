@@ -1,5 +1,6 @@
 package prg.titech.chain.token;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.annotation.Nonnull;
 import org.jspecify.annotations.NonNull;
 
@@ -12,6 +13,7 @@ public record Position(int line, int column) implements Comparable<Position> {
         return new Position(position.line, position.column);
     }
 
+    @JsonIgnore
     public boolean isValid() {
         return line >= HOME.line && column >= HOME.column;
     }
