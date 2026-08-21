@@ -30,7 +30,9 @@ public class SQLAnalyzer {
         return analyze(translation.toString()).stream().map(p -> {
             Token targetToken = TokenUtil.fromSqlToken(p.currentToken.next);
             List<Token> sourceTokens = translation.findSourceOfOrAfter(targetToken);
-            return new ParseError(sourceTokens.getFirst(), targetToken, p.getMessage());
+            return new ParseError(sourceTokens.getFirst(), targetToken,
+                String.format("Unexpected token \"%s\" in SQL translation: %s", targetToken.getImage(), translation)
+            );
         }).toList();
     }
 }
