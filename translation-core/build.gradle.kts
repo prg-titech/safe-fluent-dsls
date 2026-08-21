@@ -23,7 +23,7 @@ dependencies {
 
 application {
     // Define the main class for the application.
-    mainClass = "prg.titech.Analyzer"
+    mainClass = "prg.titech.api.BasicServer"
 }
 
 tasks.jar {
