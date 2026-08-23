@@ -1,0 +1,14 @@
+[package]
+name = "lsp-bridge"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tower-lsp = "0.20.0"
+serde_json = "*"
+tower = { version = "0.5.3", features = ["full"] }
+async-lsp-client = "0.2.3"
+
+[dependencies.tokio]
+version = "1.53.1"
+features = ["full"]
