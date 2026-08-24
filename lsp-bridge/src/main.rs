@@ -6,8 +6,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::error::TryRecvError;
 use tower_lsp::jsonrpc::{self};
-use tower_lsp::lsp_types::notification::DidOpenTextDocument;
-use tower_lsp::lsp_types::request::SemanticTokensFullRequest;
+use tower_lsp::lsp_types::notification::{DidChangeTextDocument, DidOpenTextDocument};
 use tower_lsp::lsp_types::*;
 
 #[tokio::main(flavor = "multi_thread")]
@@ -56,7 +55,32 @@ async fn main() -> Result<(), jsonrpc::Error> {
         })
         .await;
 
-    tokio::time::timeout(Duration::from_secs(1), handle).await.expect_err("Handler crashed");
+    server
+        .send_notification::<DidChangeTextDocument>(DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                uri: example_id.uri,
+                version: 2,
+            },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: Some(Range {
+                    start: Position {
+                        line: 0,
+                        character: 28,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 28,
+                    },
+                }),
+                range_length: None,
+                text: " WHERE children = \"10\"".to_owned(),
+            }],
+        })
+        .await;
+
+    tokio::time::timeout(Duration::from_secs(1), handle)
+        .await
+        .expect_err("Handler crashed");
     server.shutdown().await?;
     server.exit().await;
 
@@ -98,16 +122,26 @@ async fn message_loop(mut rx: Receiver<ServerMessage>) {
                         .await
                         .expect("UNABLE TO WRITE TO STDOUT");
                 }
+                "textDocument/publishDiagnostics" => {
+                    let params: PublishDiagnosticsParams =
+                        serde_json::from_value(msg.params.expect("Missing parameters").clone())
+                            .expect("Invalid parameters");
+                    for diagnostic in params.diagnostics {
+                        stdout
+                            .write_all(format!("PARSE ERROR: {:#?}\n", diagnostic.range).as_bytes())
+                            .await
+                            .unwrap();
+                    }
+                }
                 _ => {
                     todo!("notification {} not implemented", msg.method)
                 }
             },
-            Ok(ServerMessage::Request(msg)) => {
-                todo!(
-                    "server -> client request '{}' not implemented",
-                    msg.method()
-                )
-            }
+            Ok(ServerMessage::Request(msg)) => match msg.method() {
+                _ => {
+                    todo!("result {} not implemented", msg.method())
+                }
+            },
         }
     }
 }

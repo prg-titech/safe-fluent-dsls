@@ -1,4 +1,5 @@
 mod lsp;
+mod iter;
 
 use lsp::Sqls;
 use tower_lsp::{LspService, Server};
