@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class JavaExprReplaceVisitor extends ModifyingVisitor<AtomicBoolean> {
 
+    @SuppressWarnings("unchecked")
     public static <V extends Visitable> Optional<V> replaceIn(V v) {
         JavaExprReplaceVisitor self = new JavaExprReplaceVisitor();
         AtomicBoolean isValid = new AtomicBoolean(true);

@@ -8,7 +8,6 @@ import org.gradle.api.GradleException;
 import org.gradle.api.file.ConfigurableFileCollection;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.tasks.*;
-import org.jspecify.annotations.NonNull;
 import prg.titech.api.Grammar;
 
 import java.io.IOException;
@@ -84,7 +83,7 @@ public abstract class GenerateAPITask extends DefaultTask {
         }
     }
 
-    private static @NonNull Map<String, String> getGeneratedSources(Map<Class<?>, Grammar> grammars) {
+    private static Map<String, String> getGeneratedSources(Map<Class<?>, Grammar> grammars) {
         Map<String, String> generatedSources = new HashMap<>(3 * grammars.size());
         for (Map.Entry<Class<?>, Grammar> grammarEntry : grammars.entrySet()) {
             JavaMediator jm = grammarEntry.getValue().getJavaMediator();

@@ -1,4 +1,4 @@
-package sql;
+package input.sql;
 
 import fling.BNF;
 import fling.Terminal;

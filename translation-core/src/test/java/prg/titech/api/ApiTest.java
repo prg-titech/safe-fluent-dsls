@@ -17,6 +17,7 @@ import java.nio.file.Paths;
 import java.util.stream.Collectors;
 
 public class ApiTest {
+    @SuppressWarnings("unused")
     private static final Path[] testPaths = new Path[] { Paths.get("src", "test", "java", "prg", "titech", "TestFixtures.java") };
     private static HttpServer backend;
 

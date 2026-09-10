@@ -39,6 +39,7 @@ public class ModifyingVisitor<S> implements GenericVisitor<Visitable, S> {
         return value;
     }
 
+    @SuppressWarnings("unchecked")
     private <V extends Visitable> List<V> modifyList(List<V> list, S state) {
         return list.stream().map(v -> (V) v.accept(this, state))
                 .filter(Objects::nonNull)

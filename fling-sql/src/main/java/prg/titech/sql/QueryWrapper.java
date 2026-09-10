@@ -21,6 +21,7 @@ public class QueryWrapper {
 
         Query ast3 = select("name, birth_year").from("Students")
                 .where("birth_year == 2005").$();
+        System.out.println(ast3);
     }
 
     public QueryWrapper(List<String> selections, String from, Optional<Where> whereClause) {
