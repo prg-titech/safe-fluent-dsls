@@ -1,4 +1,4 @@
-package demo;
+package input.demo;
 
 import fling.BNF;
 import fling.Terminal;

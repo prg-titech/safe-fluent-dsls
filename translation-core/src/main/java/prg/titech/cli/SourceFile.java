@@ -18,15 +18,13 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class SourceFile implements AutoCloseable {
-    private final Path path;
     private final FileMonitor fileMonitor;
     private final List<String> latestContent;
     private final List<FileObserver<Object>> observers;
     private final ReadWriteLock lock;
     private Lock readLock;
 
-    public SourceFile(Path path, FileMonitor fileMonitor, List<String> latestContent, List<FileObserver<Object>> observers, ReadWriteLock lock) {
-        this.path = path;
+    public SourceFile(FileMonitor fileMonitor, List<String> latestContent, List<FileObserver<Object>> observers, ReadWriteLock lock) {
         this.fileMonitor = fileMonitor;
         this.latestContent = latestContent;
         this.observers = observers;
@@ -73,7 +71,7 @@ public class SourceFile implements AutoCloseable {
         ));
 
         FileMonitor monitor = new FileMonitor(watchService, 50, observers);
-        return new SourceFile(filePath, monitor, latestContent, observers, lock);
+        return new SourceFile(monitor, latestContent, observers, lock);
     }
 
     public void addObserver(FileObserver<Object> observer) {

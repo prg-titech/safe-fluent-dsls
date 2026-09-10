@@ -28,6 +28,7 @@ public class Analyzer implements Runnable {
     boolean isInteractiveModeEnabled;
 
     @Override
+    @SuppressWarnings("unchecked")
     public void run() {
         try (SourceFile source = SourceFile.fromFile(sourceFile)) {
             if (isInteractiveModeEnabled) {
