@@ -31,3 +31,6 @@ chain.rs
 .vscode
 dist
 node_modules
+
+# Generated
+generated.rs

@@ -2,12 +2,20 @@
 name = "sqls"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [dependencies]
+auto-lsp = { version = "0.6.2", features = ["lsp_server"] }
+fastrace = "0.7.19"
 lazy_static = "1.5.0"
+stderrlog = "0.6.0"
 tokio = { version = "1.53.1", features = ["full"] }
 tower = { version = "0.5.3", features = ["full"] }
 tower-lsp = "0.20.0"
-tree-sitter = "0.26.13"
 tree-sitter-sequel = "0.3.11"
 
+[build-dependencies]
+auto-lsp-codegen = "0.2.1"
+tree-sitter-sequel = "0.3.11"
+syn = "3.0.5"
+prettyplease = "0.3.0"
