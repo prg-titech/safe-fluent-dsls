@@ -1,25 +1,23 @@
 #![recursion_limit = "256"]
 
-mod generated;
-
-use crate::generated::Program;
-use auto_lsp::default::db::{BaseDatabase, BaseDb};
-use auto_lsp::default::server::capabilities::WORKSPACE_PROVIDER;
+use auto_lsp::configure_parsers;
+use auto_lsp::default::db::BaseDatabase;
 use auto_lsp::default::server::file_events::{changed_watched_files, open_text_document};
-use auto_lsp::default::server::workspace_init::WorkspaceInit;
-use auto_lsp::lsp_server::{Connection, RequestId};
+use auto_lsp::lsp_server::RequestId;
+use auto_lsp::lsp_types::NumberOrString;
 use auto_lsp::lsp_types::notification::{
     Cancel, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
     LogTrace, SetTrace,
 };
-use auto_lsp::lsp_types::{NumberOrString, ServerCapabilities, ServerInfo};
-use auto_lsp::server::Session;
 use auto_lsp::server::notification_registry::NotificationRegistry;
-use auto_lsp::server::request_registry::RequestRegistry;
-use auto_lsp::{configure_parsers, server::options::InitOptions};
+use auto_lsp::texter::core::text::Text;
 use fastrace::collector::{Config, ConsoleReporter};
+use sqls::generated::Program;
+use sqls::server::Backend;
 use std::error::Error;
 use std::panic::RefUnwindSafe;
+use tower_lsp_server::ls_types::OneOf::Left;
+use tower_lsp_server::ls_types::{WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities};
 use tree_sitter_sequel::LANGUAGE;
 
 configure_parsers!(
@@ -30,59 +28,57 @@ configure_parsers!(
     }
 );
 
+pub trait ExtendDb: BaseDatabase {
+    fn get_urls(&self) -> Vec<String> {
+        self.get_files()
+            .iter()
+            .map(|file| file.url(self).to_string())
+            .collect()
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     stderrlog::new()
-        .modules([module_path!(), "auto_lsp"])
+        .modules([module_path!(), "sqls"])
         .verbosity(4)
         .init()
         .unwrap();
 
     fastrace::set_reporter(ConsoleReporter, Config::default());
 
-    // Server options
-    let options = InitOptions {
-        parsers: &SQL_PARSERS,
-        capabilities: ServerCapabilities {
-            workspace: WORKSPACE_PROVIDER.clone(),
+    let backend_builder = Backend::builder()
+        .parsers(&SQL_PARSERS)
+        .capabilities(tower_lsp_server::ls_types::ServerCapabilities {
+            workspace: Some(WorkspaceServerCapabilities {
+                workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                    change_notifications: Some(Left(true)),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
             ..Default::default()
-        },
-        server_info: Some(ServerInfo {
+        })
+        .info(tower_lsp_server::ls_types::ServerInfo {
             name: "sqls".to_string(),
             version: Some("0.1.0".to_string()),
-        }),
-    };
+        })
+        .encoding(Text::new)
+        .extensions(
+            [("sql".to_string(), "sql".to_string())]
+                .into_iter()
+                .collect(),
+        );
 
-    // Create the connection
-    let (connection, io_threads) = Connection::stdio();
-    // Create a database, either BaseDb or your own
-    let db = BaseDb::default();
+    let (lsp_service, socket) = tower_lsp_server::LspService::new(move |client| {
+        backend_builder.client(client).build().unwrap()
+    });
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
+    tower_lsp_server::Server::new(stdin, stdout, socket)
+        .serve(lsp_service)
+        .await;
 
-    // Create the session
-    let (mut session, params) = Session::create(options, connection, db)?;
-
-    // This is where you register your requests and notifications
-    // See the handlers section for more information
-    let mut request_registry = RequestRegistry::<BaseDb>::default();
-    let mut notification_registry = NotificationRegistry::<BaseDb>::default();
-    on_notifications(&mut notification_registry);
-
-    // This will add all files available in the workspace.
-    // The init_workspace is only available for databases that implement BaseDatabase or BaseDb
-    let init_results = session.init_workspace(params)?;
-    if !init_results.is_empty() {
-        init_results.into_iter().for_each(|result| {
-            if let Err(err) = result {
-                eprintln!("{}", err);
-            }
-        });
-    };
-
-    // Run the server and wait for the two threads to end (typically by trigger LSP Exit event).
-    session.main_loop(&mut request_registry, &mut notification_registry)?;
-    io_threads.join()?;
-
-    // Shut down gracefully.
     eprintln!("Shutting down server");
     Ok(())
 }
