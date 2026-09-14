@@ -1,7 +1,6 @@
-#![recursion_limit = "256"]
-pub mod generated;
-pub mod requests;
 pub mod server;
+pub mod error;
+pub mod util;
 
 #[cfg(test)]
 mod tests;

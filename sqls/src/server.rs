@@ -1,106 +1,93 @@
-use std::collections::HashMap;
-use std::io::Read;
-use std::sync::Arc;
-
-use auto_lsp::core::document::Document;
-use auto_lsp::core::errors::{
-    DataBaseError, ExtensionError, FileSystemError, RuntimeError, TreeSitterError,
-};
-use auto_lsp::core::parsers::Parsers;
-use auto_lsp::default::db::{BaseDatabase, BaseDb};
-use auto_lsp::default::server::workspace_init::WorkspaceInit;
-use auto_lsp::lsp_types::Url;
-use auto_lsp::texter::core::text::Text;
+use crate::error::Error;
+use crate::util::convert::{convert_text_document_content_change_event, convert_ts_range};
+use dashmap::mapref::one::Ref;
 use dashmap::{DashMap, Entry};
-use rayon::prelude::*;
+use std::sync::Arc;
+use texter::core::text::Text;
+use texter::tree_sitter::StreamingIterator;
+use texter::tree_sitter::{self, Parser, Query, QueryCursor, Tree};
+use tokio::sync::RwLock;
 use tower_lsp_server::jsonrpc::Result as JrpcResult;
-use tower_lsp_server::ls_types::{InitializeParams, InitializeResult, MessageType, ServerCapabilities, ServerInfo};
+use tower_lsp_server::ls_types::{
+    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams, NumberOrString, Position, Range, TextDocumentContentChangeEvent, Uri,
+};
+use tower_lsp_server::ls_types::{
+    InitializeParams, InitializeResult, MessageType, ServerCapabilities, ServerInfo,
+};
 use tower_lsp_server::{Client, LanguageServer};
-use walkdir::WalkDir;
 
-/// Get the extension of a file from a [`Url`] path
-#[cfg(windows)]
-pub(crate) fn get_extension(path: &Url) -> Result<String, FileSystemError> {
-    // Ensure the host is either empty or "localhost" on Windows
-    if let Some(host) = path.host_str() {
-        if !host.is_empty() && host != "localhost" {
-            return Err(FileSystemError::FileUrlHost {
-                host: host.to_string(),
-                path: path.clone(),
+#[derive(Debug, Clone)]
+pub struct Document {
+    texter: Text,
+    tree: Tree,
+}
+
+impl Document {
+    fn split_mut(&mut self) -> (&mut Text, &mut Tree) {
+        let text_ptr: *mut Text = &mut self.texter;
+        let tree_ptr: *mut Tree = &mut self.tree;
+
+        // SAFETY: These fields should never overlap in memory.
+        unsafe { (&mut (*text_ptr), &mut (*tree_ptr)) }
+    }
+
+    pub fn update(
+        &mut self,
+        change: TextDocumentContentChangeEvent,
+    ) -> Result<(), texter::error::Error> {
+        let (texter, tree) = self.split_mut();
+        texter.update(convert_text_document_content_change_event(change), tree)
+    }
+
+    pub fn compute_diagnostics(&self) -> Vec<Diagnostic> {
+        let error_query: Query = Query::new(&self.tree.language(), "(ERROR) @error-node").unwrap(); // Error should always be a valid query
+        let mut query_cursor = QueryCursor::new();
+        let mut matches = query_cursor.matches(
+            &error_query,
+            self.tree.root_node(),
+            self.texter.text.as_bytes(),
+        );
+
+        let mut result = vec![];
+        while let Some(m) = matches.next() {
+            let node = m.captures[0].node;
+            let range = convert_ts_range(node.range());
+            result.push(Diagnostic {
+                range: range,
+                severity: Some(DiagnosticSeverity::ERROR),
+                source: Some("SQL Tree Sitter".to_owned()),
+                message: node.to_string(),
+                ..Default::default()
             });
         }
-    }
 
-    path.to_file_path()
-        .map_err(|_| FileSystemError::FileUrlToFilePath { path: path.clone() })?
-        .extension()
-        .map_or_else(
-            || Err(FileSystemError::FileExtension { path: path.clone() }),
-            |ext| Ok(ext.to_string_lossy().to_string()),
-        )
-}
-
-#[cfg(not(windows))]
-pub(crate) fn get_extension(path: &Url) -> Result<String, FileSystemError> {
-    path.to_file_path()
-        .map_err(|_| FileSystemError::FileUrlToFilePath { path: path.clone() })?
-        .extension()
-        .map_or_else(
-            || Err(FileSystemError::FileExtension { path: path.clone() }),
-            |ext| Ok(ext.to_string_lossy().to_string()),
-        )
-}
-
-pub trait ExtendDb: BaseDatabase {
-    fn get_urls(&self) -> Vec<String> {
-        self.get_files()
-            .iter()
-            .map(|file| file.url(self).to_string())
-            .collect()
+        result
     }
 }
-
-impl ExtendDb for BaseDb {}
 
 pub struct File {
-    pub url: Url,
-    pub parsers: &'static Parsers,
-    pub document: Arc<Document>,
+    pub url: Uri,
+    pub document: Document,
 }
 
 impl File {
-    pub fn new(url: Url, parsers: &'static Parsers, document: Arc<Document>) -> Self {
-        File {
-            url,
-            parsers,
-            document,
-        }
+    pub fn new(url: Uri, document: Document) -> Self {
+        File { url, document }
     }
 }
 
 pub struct Backend {
     client: Client,
-    parsers: &'static HashMap<&'static str, Parsers>,
-    capabilities: ServerCapabilities,
-    info: ServerInfo,
-    files: Arc<DashMap<Url, File>>,
+    parser: Arc<RwLock<Parser>>,
+    files: Arc<DashMap<Uri, File>>,
     encoding: fn(String) -> Text,
-    extensions: HashMap<String, String>,
-}
-
-pub struct BackendMut<'a> {
-    inner: &'a Backend,
 }
 
 #[derive(Default)]
 pub struct BackendBuilder {
     client: Option<Client>,
-    parsers: Option<&'static HashMap<&'static str, Parsers>>,
-    capabilities: Option<ServerCapabilities>,
-    info: Option<ServerInfo>,
-    files: DashMap<Url, File>,
+    files: DashMap<Uri, File>,
     encoding: Option<fn(String) -> Text>,
-    extensions: HashMap<String, String>,
 }
 
 impl Backend {
@@ -108,42 +95,64 @@ impl Backend {
         BackendBuilder::default()
     }
 
-    pub async fn log_runtime_error(&self, error: RuntimeError) {
+    pub async fn log_runtime_error(&self, error: Error) {
         self.client
             .log_message(MessageType::ERROR, error.to_string())
             .await;
     }
 
-    pub fn write<'a>(&'a self) -> BackendMut<'a> {
-        BackendMut { inner: self }
-    }
-
-    pub fn get_files(&self) -> Arc<DashMap<Url, File>> {
-        self.files.clone()
-    }
-
-    fn add_file_from_texter(
+    async fn add_file_from_texter(
         &self,
-        parsers: &'static Parsers,
-        url: &Url,
+        url: &Uri,
         texter: Text,
-    ) -> Result<(), DataBaseError> {
-        let tree = parsers
+    ) -> Result<Ref<'_, Uri, File>, Error> {
+        let tree = self
             .parser
             .write()
+            .await
             .parse(texter.text.as_bytes(), None)
-            .ok_or_else(|| DataBaseError::from((url, TreeSitterError::TreeSitterParser)))?;
+            .ok_or_else(|| Error::TreeSitterParserError)?;
 
         let document = Document { texter, tree };
-        let file = File::new(url.clone(), parsers, Arc::new(document));
+        let file = File::new(url.clone(), document);
 
-        match self.get_files().entry(url.clone()) {
-            Entry::Occupied(_) => Err(DataBaseError::FileAlreadyExists { uri: url.clone() }),
+        match self.files.entry(url.clone()) {
+            Entry::Occupied(_) => Err(Error::FileAlreadyExists { uri: url.clone() })?,
             Entry::Vacant(entry) => {
                 entry.insert(file);
-                Ok(())
             }
+        };
+        Ok(self.files.get(url).unwrap())
+    }
+
+    fn update(
+        &self,
+        url: &Uri,
+        changes: &[TextDocumentContentChangeEvent],
+    ) -> Result<Option<Ref<'_, Uri, File>>, texter::error::Error> {
+        if let Some(mut file) = self.files.get_mut(url) {
+            for change in changes {
+                file.document.update(change.clone())?;
+            }
+            Ok(Some(file.downgrade()))
+        } else {
+            Ok(None)
         }
+    }
+
+    pub async fn stdio() {
+        let backend_builder = Backend::builder().encoding(Text::new);
+
+        let (lsp_service, socket) = tower_lsp_server::LspService::new(move |client| {
+            backend_builder.client(client).build().unwrap()
+        });
+        let stdin = tokio::io::stdin();
+        let stdout = tokio::io::stdout();
+        tower_lsp_server::Server::new(stdin, stdout, socket)
+            .serve(lsp_service)
+            .await;
+
+        eprintln!("Shutting down server");
     }
 }
 
@@ -153,160 +162,86 @@ impl BackendBuilder {
         self
     }
 
-    pub fn parsers(mut self, parsers: &'static HashMap<&'static str, Parsers>) -> Self {
-        self.parsers = Some(parsers);
-        self
-    }
-
-    pub fn capabilities(mut self, capabilities: ServerCapabilities) -> Self {
-        self.capabilities = Some(capabilities);
-        self
-    }
-
-    pub fn info(mut self, info: ServerInfo) -> Self {
-        self.info = Some(info);
-        self
-    }
-
     pub fn encoding(mut self, encoding: fn(String) -> Text) -> Self {
         self.encoding = Some(encoding);
         self
     }
 
-    pub fn extensions(mut self, extensions: HashMap<String, String>) -> Self {
-        self.extensions = extensions;
-        self
-    }
-
     pub fn build(self) -> Option<Backend> {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_sequel::LANGUAGE.into())
+            .ok()?;
+
         Some(Backend {
             client: self.client?,
-            parsers: self.parsers?,
-            capabilities: self.capabilities?,
-            info: self.info?,
+            parser: Arc::new(RwLock::new(parser)),
             files: Arc::new(self.files),
             encoding: self.encoding?,
-            extensions: self.extensions,
         })
-    }
-}
-
-impl<'a> WorkspaceInit for BackendMut<'a> {
-    fn init_workspace(
-        &mut self,
-        params: auto_lsp::lsp_types::InitializeParams,
-    ) -> Result<
-        Vec<Result<(), auto_lsp::core::errors::RuntimeError>>,
-        auto_lsp::core::errors::RuntimeError,
-    > {
-        let mut errors: Vec<Result<(), RuntimeError>> = vec![];
-
-        if let Some(folders) = params.workspace_folders {
-            let files = folders
-                .into_iter()
-                .flat_map(|folder| {
-                    WalkDir::new(folder.uri.path())
-                        .into_iter()
-                        .filter_map(Result::ok)
-                        .filter(|entry| {
-                            entry.file_type().is_file()
-                                && entry.path().extension().is_some_and(|ext| {
-                                    self.inner
-                                        .extensions
-                                        .contains_key(ext.to_string_lossy().as_ref())
-                                })
-                        })
-                })
-                .collect::<Vec<_>>();
-
-            errors.extend(rayon_par_bridge::par_bridge(
-                16,
-                files.into_par_iter(),
-                |file_iter| {
-                    file_iter
-                        .map(|file| match self.read_file(&file.into_path()) {
-                            Ok((parsers, url, text)) => self
-                                .inner
-                                .add_file_from_texter(parsers, &url, text)
-                                .map_err(RuntimeError::from),
-                            Err(err) => Err(RuntimeError::from(err)),
-                        })
-                        .collect::<Vec<_>>()
-                },
-            ));
-        }
-
-        Ok(errors)
-    }
-
-    fn read_file(
-        &self,
-        file: &std::path::Path,
-    ) -> Result<
-        (
-            &'static auto_lsp::core::parsers::Parsers,
-            auto_lsp::lsp_types::Url,
-            Text,
-        ),
-        auto_lsp::core::errors::FileSystemError,
-    > {
-        let url = Url::from_file_path(file).map_err(|_| FileSystemError::FilePathToUrl {
-            path: file.to_path_buf(),
-        })?;
-
-        let mut open_file = std::fs::File::open(file).map_err(|e| FileSystemError::FileOpen {
-            path: url.clone(),
-            error: e.to_string(),
-        })?;
-        let mut buffer = String::new();
-        open_file
-            .read_to_string(&mut buffer)
-            .map_err(|e| FileSystemError::FileRead {
-                path: url.clone(),
-                error: e.to_string(),
-            })?;
-
-        let extension = get_extension(&url)?;
-
-        let text = (self.inner.encoding)(buffer.to_string());
-        let extension = match self.inner.extensions.get(&extension) {
-            Some(extension) => extension,
-            None => {
-                return Err(FileSystemError::from(ExtensionError::UnknownExtension {
-                    extension: extension.clone(),
-                    available: self.inner.extensions.clone(),
-                }));
-            }
-        };
-
-        let parsers = self
-            .inner
-            .parsers
-            .get(extension.as_str())
-            .ok_or_else(|| {
-                FileSystemError::from(ExtensionError::UnknownParser {
-                    extension: extension.clone(),
-                    available: self.inner.parsers.keys().cloned().collect(),
-                })
-            })?;
-        Ok((parsers, url, text))
     }
 }
 
 impl LanguageServer for Backend {
     async fn initialize(&self, _params: InitializeParams) -> JrpcResult<InitializeResult> {
-        /*let errors = self.write().init_workspace(params).map_or_else(
-            |err| vec![err],
-            |xs| xs.into_iter().flat_map(|x| x.err()).collect(),
-        );
-        for error in errors {
-            self.log_runtime_error(error).await;
-        }*/
         return Ok(InitializeResult {
-            capabilities: self.capabilities.clone(),
-            server_info: Some(self.info.clone()),
-            offset_encoding: None
+            capabilities: ServerCapabilities {
+                ..Default::default()
+            },
+            server_info: Some(ServerInfo {
+                name: "sqls".to_string(),
+                version: Some("0.1.0".to_string()),
+            }),
+            offset_encoding: None,
         });
+    }
+
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        if params.text_document.language_id == "sql" {
+            let texter = (self.encoding)(params.text_document.text);
+            match self.add_file_from_texter(&params.text_document.uri, texter).await {
+                Ok(file) => {
+                    let mut diagnostics = file.document.compute_diagnostics();
+                    diagnostics.push(Diagnostic { 
+                        range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 1 }}, 
+                        severity: Some(DiagnosticSeverity::ERROR), 
+                        code: Some(NumberOrString::String("ParseError".to_string())), 
+                        code_description: None, 
+                        source: None, 
+                        message: "Hello World!".to_string(), 
+                        ..Default::default()
+                    });
+                    self.client.publish_diagnostics(params.text_document.uri, diagnostics, None).await;
+                }
+                Err(error) => self.log_runtime_error(error).await
+            }
+        }
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        match self.update(&params.text_document.uri, &params.content_changes) {
+            Ok(Some(file)) => {
+                let mut diagnostics = file.document.compute_diagnostics();
+                diagnostics.push(Diagnostic { 
+                        range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 1 }}, 
+                        severity: Some(DiagnosticSeverity::ERROR), 
+                        code: Some(NumberOrString::String("ParseError".to_string())), 
+                        code_description: None, 
+                        source: None, 
+                        message: "Hello World!".to_string(), 
+                        ..Default::default()
+                    });
+                self.client.publish_diagnostics(params.text_document.uri, diagnostics, None).await;
+            }
+            Err(error) => self.log_runtime_error(error.into()).await,
+            Ok(None) => ()
+        }
+    }
+
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        if let Some((uri, _)) = self.files.remove(&params.text_document.uri) {
+            self.client.publish_diagnostics(uri, vec![], None).await;
+        }
     }
 
     async fn shutdown(&self) -> JrpcResult<()> {

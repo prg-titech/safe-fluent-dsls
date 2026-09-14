@@ -2,31 +2,30 @@
 name = "sqls"
 version = "0.1.0"
 edition = "2024"
-build = "build.rs"
 
 [dependencies]
+anyhow = "1.0.104"
 assert_cmd = "2.2.2"
-auto-lsp = { version = "0.6.2", features = ["lsp_server"] }
 dashmap = "6.2.1"
 escargot = "0.5.15"
 fastrace = "0.7.19"
+futures = "0.3.34"
+httparse = "1.10.1"
 lazy_static = "1.5.0"
+memchr = "2.8.3"
 rayon = "1.12.0"
 rayon-par-bridge = "0.1.0"
 serde = "1.0.229"
 serde_json = "1.0.151"
 stderrlog = "0.6.0"
+texter = { version = "0.3.0", features = ["lsp-types"] }
 tokio = { version = "1.53.1", features = ["full"] }
+tokio-util = "0.7.19"
 tower = { version = "0.5.3", features = ["full"] }
 tower-lsp-server = "0.23.0"
+tracing = "0.1.44"
 tree-sitter-sequel = "0.3.11"
 walkdir = "2.5.0"
-
-[build-dependencies]
-auto-lsp-codegen = "0.2.1"
-tree-sitter-sequel = "0.3.11"
-syn = "3.0.5"
-prettyplease = "0.3.0"
 
 [dev-dependencies]
 rstest = "0.27.0"

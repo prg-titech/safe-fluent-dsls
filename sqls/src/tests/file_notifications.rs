@@ -1,263 +1,100 @@
-use serde::{Deserialize, Serialize};
-use tower_lsp_server::jsonrpc::Request;
-use std::time::Duration;
-use std::{path::PathBuf, process::Stdio, sync::Arc};
-
-use assert_cmd::cargo::cargo_bin;
-use escargot::CargoBuild;
-use tokio::{
-    io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    process::{Child, Command},
-    sync::mpsc::channel,
-};
-
-use crate::requests::GetWorkspaceFiles;
+use crate::tests::test_client::{DefaultTestClient, stdio};
 use rstest::{fixture, rstest};
+use tower_lsp_server::{jsonrpc::{Id, Request}, ls_types::{self, ClientCapabilities, DidOpenTextDocumentParams, InitializeParams, PublishDiagnosticsParams, TextDocumentItem, Uri, WorkspaceFolder}};
 
-pub static CLIENT_CAPABILITIES: &str = include_str!("client.json");
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct JsonRpcResponse<T> {
-    jsonrpc: String,
-    pub id: u64,
-    pub result: T,
-}
-
-pub struct TestServer {
-    writer_tx: tokio::sync::mpsc::Sender<String>,
-    notify_rx: tokio::sync::mpsc::Receiver<()>,
-    pub responses: Arc<tokio::sync::RwLock<Vec<String>>>,
-    pub child: Child,
-}
-
-impl TestServer {
-    fn build_binary(curr_dir: &PathBuf) -> Result<(), std::io::Error> {
-        let result = CargoBuild::new()
-            .bin("sqls")
-            .run()
-            .expect("Failed to build server");
-
-        result.command().current_dir(curr_dir).spawn()?;
-        Ok(())
-    }
-
-    fn spawn_binary(curr_dir: &PathBuf) -> Result<Child, std::io::Error> {
-        let bin = cargo_bin("sqls");
-
-        Command::new(bin)
-            .current_dir(curr_dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    }
-
-    pub async fn stdio() -> Result<Self, std::io::Error> {
-        let curr_dir = std::env::current_dir()?;
-
-        TestServer::build_binary(&curr_dir)?;
-        let mut child = TestServer::spawn_binary(&curr_dir)?;
-
-        let mut stdin = child.stdin.take().expect("Failed to open stdin");
-        let stdout = child.stdout.take().expect("Failed to open stdout");
-        let mut stdout = BufReader::new(stdout);
-
-        let responses = Arc::new(tokio::sync::RwLock::new(vec![]));
-        let responses_clone = responses.clone();
-
-        let (notify_tx, notify_rx) = tokio::sync::mpsc::channel::<()>(100);
-        let (writer_tx, mut rx) = channel::<String>(1);
-
-        // Read messages from the server
-        tokio::task::spawn(async move {
-            while let Ok(message) = TestServer::read_message(&mut stdout).await {
-                println!("Received Response:\n{message}");
-                responses_clone.write().await.push(message);
-                let _ = notify_tx.send(()).await;
-            }
-        });
-
-        // Write messages to the server
-        tokio::task::spawn(async move {
-            while let Some(message) = rx.recv().await {
-                let msg = format!("Content-Length: {}\r\n\r\n{}", message.len(), message);
-                println!("Sending Request:\n{message}");
-                stdin.write_all(msg.as_bytes()).await?;
-                stdin.flush().await?;
-            }
-            Ok::<(), std::io::Error>(())
-        });
-
-        Ok(Self {
-            notify_rx,
-            writer_tx,
-            responses,
-            child,
-        })
-    }
-
-    /// Waits until `n` messages have been received.
-    pub async fn wait_for_messages(&mut self, n: usize) {
-        for _ in 0..n {
-            self.notify_rx.recv().await;
-        }
-    }
-
-    async fn read_message<T: AsyncBufRead + std::marker::Unpin>(
-        stdout: &mut T,
-    ) -> Result<String, std::io::Error> {
-        let mut headers = String::new();
-        loop {
-            let mut line = String::new();
-            stdout.read_line(&mut line).await?;
-            if line == "\r\n" {
-                break; // End of headers
-            }
-            headers.push_str(&line);
-        }
-
-        // Extract Content-Length
-        let content_length = headers
-            .lines()
-            .find_map(|line| {
-                if line.to_lowercase().starts_with("content-length:") {
-                    line["Content-Length:".len()..].trim().parse::<usize>().ok()
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0);
-
-        // Read full message body
-        let mut body = vec![0; content_length];
-        stdout.read_exact(&mut body).await?;
-
-        Ok(String::from_utf8_lossy(&body).to_string())
-    }
-
-    pub async fn write_message(
-        &mut self,
-        message: &str,
-    ) -> Result<(), tokio::sync::mpsc::error::SendError<std::string::String>> {
-        self.writer_tx.send(message.to_string()).await
-    }
+async fn read_file_from_uri(uri: &Uri) -> Result<String, tokio::io::Error> {
+    tokio::fs::read_to_string(uri.to_file_path().unwrap()).await
 }
 
 #[fixture]
-async fn stdio_server() -> TestServer {
+async fn stdio_client() -> DefaultTestClient {
     let testbed_dir = std::env::current_dir().unwrap().join("src/testbed");
-    let mut server = TestServer::stdio().await.unwrap();
+    let testbed_dir = Uri::from_file_path(testbed_dir).unwrap();
+    let mut client = stdio().await;
 
-    // Send client capabilities
-    // Workspace folder URI is prefixed with current directory
-    server
-        .write_message(
-            CLIENT_CAPABILITIES
-                .replace(
-                    "file:///testbed",
-                    format!("file:///{}", testbed_dir.to_str().unwrap()).as_str(),
-                )
-                .as_str(),
+    println!("started server!");
+
+    let initialize_params: InitializeParams = InitializeParams { 
+        capabilities: ClientCapabilities::default(), 
+        workspace_folders: Some(
+            vec![WorkspaceFolder {name: "testbed".to_string(), uri: testbed_dir.clone() }]
+        ), 
+        trace: Some(ls_types::TraceValue::Off),
+        ..Default::default()
+    };
+
+    let initialize_response = client
+        .make_request(
+            Request::build("initialize")
+                .id(1)
+                .params(serde_json::to_value(initialize_params).unwrap())
+                .finish(),
         )
-        .await
-        .unwrap();
+        .await;
+    assert!(initialize_response.is_ok());
 
-    // Initialized
-    server
-        .write_message(r#"{"jsonrpc": "2.0", "method": "initialized", "params": {}}"#)
-        .await
-        .unwrap();
-
-    server.wait_for_messages(1).await;
-
-    // Request with id 1 is the initialized response
-    assert!(server.responses.read().await[0].contains(r#""id":1"#));
-    server.responses.write().await.clear();
-
-    server
+    client
+        .send_notification(Request::build("initialized").finish())
+        .await;
+    client
 }
 
 #[rstest]
-#[tokio::test]
-async fn workspace_files(
-    #[future] mut stdio_server: TestServer,
+#[tokio::test(flavor="current_thread")]
+async fn server_sends_diagnostics_on_file_event(
+    #[future] mut stdio_client: DefaultTestClient
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut stdio_server = stdio_server.await;
+    let mut stdio_client = stdio_client.await;
 
-    println!("Hello?");
+    let testbed_path = std::env::current_dir().unwrap().join("src/testbed");
+    let file1_uri = Uri::from_file_path(testbed_path.join("file1.sql")).unwrap();
+    let file2_uri = Uri::from_file_path(testbed_path.join("file2.sql")).unwrap();
+    let file3_uri = Uri::from_file_path(testbed_path.join("nested/file3.sql")).unwrap();
 
-    // Workspace files are checked on initialization
-    // We expect all files from the testbed directory to be present
+    stdio_client.send_notification(
+        Request::build("textDocument/didOpen")
+            .params(serde_json::to_value(DidOpenTextDocumentParams { 
+                text_document: TextDocumentItem { 
+                    uri: file1_uri.clone(), 
+                    language_id: "sql".to_string(), 
+                    version: 1, 
+                    text: read_file_from_uri(&file1_uri).await?
+                } 
+            })?)
+            .finish()
+    ).await;
 
-    stdio_server
-        .write_message(&GetWorkspaceFiles::request(2))
-        .await?;
-
-    stdio_server.wait_for_messages(1).await;
-
-    let responses = stdio_server.responses.read().await;
-
-    let workspace_response: JsonRpcResponse<Vec<String>> = serde_json::from_str(&responses[0])?;
-    assert_eq!(workspace_response.id, 2);
-    assert_eq!(workspace_response.result.len(), 3);
-
-    assert!(
-        workspace_response
-            .result
-            .iter()
-            .any(|x| x.ends_with("testbed/file1.sql"))
-    );
-    assert!(
-        workspace_response
-            .result
-            .iter()
-            .any(|x| x.ends_with("testbed/file2.sql"))
-    );
-    assert!(
-        workspace_response
-            .result
-            .iter()
-            .any(|x| x.ends_with("testbed/nested/file3.sql"))
-    );
+    let publish_diagnostics = stdio_client.receive_request().await;
+    assert_eq!(publish_diagnostics.id(), None);
+    assert_eq!(publish_diagnostics.method(), "textDocument/publishDiagnostics");
+    let params: PublishDiagnosticsParams = serde_json::from_value(publish_diagnostics.into_parts().2.unwrap())?;
+    assert_eq!(params.uri, file1_uri);
+    assert_eq!(params.version, None);
+    assert_eq!(params.diagnostics, vec![]);
 
     Ok(())
 }
 
 #[rstest]
-#[tokio::test]
+#[tokio::test(flavor="current_thread")]
 async fn server_shuts_down_cleanly(
-    #[future] mut stdio_server: TestServer,
+    #[future] mut stdio_client: DefaultTestClient,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut stdio_server = stdio_server.await;
+    let mut stdio_client = stdio_client.await;
 
-    // Send shutdown request
-    stdio_server
-        .write_message(r#"{"jsonrpc":"2.0","id":99,"method":"shutdown"}"#)
-        .await?;
+    let shutdown_response = stdio_client
+        .make_request(Request::build("shutdown").id(99).finish())
+        .await;
 
-    stdio_server.wait_for_messages(1).await;
+    assert!(shutdown_response.is_ok());
+    assert_eq!(shutdown_response.id().clone(), Id::Number(99));
 
-    let exit = Request::build("exit").finish();
-    // Send exit notification
-    stdio_server
-        .write_message(serde_json::to_string(&exit)?.as_str())
-        .await?;
+    stdio_client
+        .send_notification(Request::build("exit").finish())
+        .await;
 
-    // The server process should terminate within a reasonable time
-    let result = tokio::time::timeout(Duration::from_secs(5), stdio_server.child.wait()).await;
+    let exit_status = stdio_client.child.wait().await.unwrap();
 
-    match result {
-        Ok(Ok(status)) => {
-            assert!(
-                status.success(),
-                "Server exited with non-zero status: {status}"
-            );
-        }
-        Ok(Err(e)) => panic!("Failed to wait on server process: {e}"),
-        Err(_) => panic!(
-            "Server failed to shut down within 5 seconds - io_threads.join() is likely hanging"
-        ),
-    }
-
+    assert!(exit_status.success());
     Ok(())
 }
