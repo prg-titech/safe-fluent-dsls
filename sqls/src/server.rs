@@ -1,7 +1,9 @@
 use crate::error::Error;
+use crate::lsp_service_ext::{ClientSocketExt, LspServiceExt};
 use crate::util::convert::{convert_text_document_content_change_event, convert_ts_range};
 use dashmap::mapref::one::Ref;
 use dashmap::{DashMap, Entry};
+use log::info;
 use std::sync::Arc;
 use texter::core::text::Text;
 use texter::tree_sitter::StreamingIterator;
@@ -9,7 +11,7 @@ use texter::tree_sitter::{self, Parser, Query, QueryCursor, Tree};
 use tokio::sync::RwLock;
 use tower_lsp_server::jsonrpc::Result as JrpcResult;
 use tower_lsp_server::ls_types::{
-    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams, NumberOrString, Position, Range, TextDocumentContentChangeEvent, Uri,
+    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams, NumberOrString, Position, PositionEncodingKind, Range, TextDocumentContentChangeEvent, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, Uri,
 };
 use tower_lsp_server::ls_types::{
     InitializeParams, InitializeResult, MessageType, ServerCapabilities, ServerInfo,
@@ -31,16 +33,19 @@ impl Document {
         unsafe { (&mut (*text_ptr), &mut (*tree_ptr)) }
     }
 
-    pub fn update(
+    pub async fn update(
         &mut self,
         change: TextDocumentContentChangeEvent,
-    ) -> Result<(), texter::error::Error> {
+        parser: Arc<RwLock<Parser>>
+    ) -> Result<(), Error> {
         let (texter, tree) = self.split_mut();
-        texter.update(convert_text_document_content_change_event(change), tree)
+        texter.update(convert_text_document_content_change_event(change), tree)?;
+        *tree = parser.write().await.parse(texter.text.as_bytes(), Some(tree)).ok_or_else(|| Error::TreeSitterParserError)?;
+        Ok(())
     }
 
     pub fn compute_diagnostics(&self) -> Vec<Diagnostic> {
-        let error_query: Query = Query::new(&self.tree.language(), "(ERROR) @error-node").unwrap(); // Error should always be a valid query
+        let error_query: Query = Query::new(&self.tree.language(), "[(ERROR) @error-node (MISSING) @missing-node]").unwrap(); // Error should always be a valid query
         let mut query_cursor = QueryCursor::new();
         let mut matches = query_cursor.matches(
             &error_query,
@@ -52,11 +57,12 @@ impl Document {
         while let Some(m) = matches.next() {
             let node = m.captures[0].node;
             let range = convert_ts_range(node.range());
+            let message = if m.pattern_index == 0 { "Unexpected Token".to_string() } else { format!("Missing {}", node.child(0).unwrap().to_string()) };
             result.push(Diagnostic {
                 range: range,
                 severity: Some(DiagnosticSeverity::ERROR),
                 source: Some("SQL Tree Sitter".to_owned()),
-                message: node.to_string(),
+                message: message,
                 ..Default::default()
             });
         }
@@ -125,15 +131,21 @@ impl Backend {
         Ok(self.files.get(url).unwrap())
     }
 
-    fn update(
+    async fn update(
         &self,
         url: &Uri,
         changes: &[TextDocumentContentChangeEvent],
-    ) -> Result<Option<Ref<'_, Uri, File>>, texter::error::Error> {
+    ) -> Result<Option<Ref<'_, Uri, File>>, Error> {
         if let Some(mut file) = self.files.get_mut(url) {
             for change in changes {
-                file.document.update(change.clone())?;
+                file.document.update(change.clone(), self.parser.clone()).await?;
             }
+            info!(
+                "Updated file: {}, new text: {}, new ast: {}", 
+                file.key().as_str(), 
+                serde_json::to_string(&file.document.texter.text).unwrap(), 
+                file.document.tree.root_node().to_sexp()
+            );
             Ok(Some(file.downgrade()))
         } else {
             Ok(None)
@@ -143,9 +155,9 @@ impl Backend {
     pub async fn stdio() {
         let backend_builder = Backend::builder().encoding(Text::new);
 
-        let (lsp_service, socket) = tower_lsp_server::LspService::new(move |client| {
-            backend_builder.client(client).build().unwrap()
-        });
+        let (lsp_service, socket) =
+            LspServiceExt::new(move |client| backend_builder.client(client).build().unwrap());
+        let socket = ClientSocketExt::new(socket);
         let stdin = tokio::io::stdin();
         let stdout = tokio::io::stdout();
         tower_lsp_server::Server::new(stdin, stdout, socket)
@@ -183,9 +195,24 @@ impl BackendBuilder {
 }
 
 impl LanguageServer for Backend {
-    async fn initialize(&self, _params: InitializeParams) -> JrpcResult<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> JrpcResult<InitializeResult> {
+        let position_encoding = match params.capabilities.general {
+            Some(general) => match general.position_encodings {
+                Some(encodings) => if encodings.contains(&PositionEncodingKind::UTF8) { PositionEncodingKind::UTF8 } else { PositionEncodingKind::UTF16 },
+                None => PositionEncodingKind::UTF16
+            },
+            None => PositionEncodingKind::UTF16
+        };
         return Ok(InitializeResult {
             capabilities: ServerCapabilities {
+                position_encoding: Some(position_encoding),
+                text_document_sync: Some(TextDocumentSyncCapability::Options(
+                    TextDocumentSyncOptions {
+                        open_close: Some(true),
+                        change: Some(TextDocumentSyncKind::INCREMENTAL),
+                        ..Default::default()
+                    }
+                )),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -199,42 +226,67 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         if params.text_document.language_id == "sql" {
             let texter = (self.encoding)(params.text_document.text);
-            match self.add_file_from_texter(&params.text_document.uri, texter).await {
+            match self
+                .add_file_from_texter(&params.text_document.uri, texter)
+                .await
+            {
                 Ok(file) => {
                     let mut diagnostics = file.document.compute_diagnostics();
-                    diagnostics.push(Diagnostic { 
-                        range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 1 }}, 
-                        severity: Some(DiagnosticSeverity::ERROR), 
-                        code: Some(NumberOrString::String("ParseError".to_string())), 
-                        code_description: None, 
-                        source: None, 
-                        message: "Hello World!".to_string(), 
+                    diagnostics.push(Diagnostic {
+                        range: Range {
+                            start: Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: 1,
+                            },
+                        },
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        code: Some(NumberOrString::String("ParseError".to_string())),
+                        code_description: None,
+                        source: None,
+                        message: "Hello World!".to_string(),
                         ..Default::default()
                     });
-                    self.client.publish_diagnostics(params.text_document.uri, diagnostics, None).await;
+                    self.client
+                        .publish_diagnostics(params.text_document.uri, diagnostics, None)
+                        .await;
                 }
-                Err(error) => self.log_runtime_error(error).await
+                Err(error) => self.log_runtime_error(error).await,
             }
         }
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        match self.update(&params.text_document.uri, &params.content_changes) {
+        match self.update(&params.text_document.uri, &params.content_changes).await {
             Ok(Some(file)) => {
                 let mut diagnostics = file.document.compute_diagnostics();
-                diagnostics.push(Diagnostic { 
-                        range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 1 }}, 
-                        severity: Some(DiagnosticSeverity::ERROR), 
-                        code: Some(NumberOrString::String("ParseError".to_string())), 
-                        code_description: None, 
-                        source: None, 
-                        message: "Hello World!".to_string(), 
-                        ..Default::default()
-                    });
-                self.client.publish_diagnostics(params.text_document.uri, diagnostics, None).await;
+                diagnostics.push(Diagnostic {
+                    range: Range {
+                        start: Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 1,
+                        },
+                    },
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    code: Some(NumberOrString::String("ParseError".to_string())),
+                    code_description: None,
+                    source: None,
+                    message: "Hello World!".to_string(),
+                    ..Default::default()
+                });
+                self.client
+                    .publish_diagnostics(params.text_document.uri, diagnostics, None)
+                    .await;
             }
             Err(error) => self.log_runtime_error(error.into()).await,
-            Ok(None) => ()
+            Ok(None) => (),
         }
     }
 
