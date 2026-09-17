@@ -34,3 +34,8 @@ node_modules
 
 # Generated
 generated.rs
+
+bin/
+.settings/
+.classpath
+.project

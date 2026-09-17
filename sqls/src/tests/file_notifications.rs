@@ -48,8 +48,6 @@ async fn server_sends_diagnostics_on_file_event(
 
     let testbed_path = std::env::current_dir().unwrap().join("src/testbed");
     let file1_uri = Uri::from_file_path(testbed_path.join("file1.sql")).unwrap();
-    let file2_uri = Uri::from_file_path(testbed_path.join("file2.sql")).unwrap();
-    let file3_uri = Uri::from_file_path(testbed_path.join("nested/file3.sql")).unwrap();
 
     stdio_client.send_notification(
         Request::build("textDocument/didOpen")
