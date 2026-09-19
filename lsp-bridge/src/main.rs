@@ -1,30 +1,45 @@
-use std::process;
-use std::time::Duration;
+use std::io::Read;
 
-use async_lsp_client::{LspServer, ServerMessage};
-use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::error::TryRecvError;
-use tower_lsp::jsonrpc::{self};
-use tower_lsp::lsp_types::notification::{DidChangeTextDocument, DidOpenTextDocument};
-use tower_lsp::lsp_types::*;
+use tower_lsp_server::LanguageServer;
+use tower_lsp_server::ls_types::{
+    ClientCapabilities, DidOpenTextDocumentParams, GeneralClientCapabilities, InitializeParams,
+    InitializedParams, PositionEncodingKind, TextDocumentClientCapabilities, TextDocumentItem,
+    TextDocumentSyncClientCapabilities, Uri,
+};
 
-#[tokio::main(flavor = "multi_thread")]
-async fn main() -> Result<(), jsonrpc::Error> {
-    let (server, rx) = LspServer::new("cargo", ["run", "--manifest-path", "../sqls/Cargo.toml"]);
+use crate::{server::Server, transport::LanguageServerService};
 
-    let handle = tokio::spawn(message_loop(rx));
+mod codec;
+mod server;
+pub mod transport;
 
-    let initialize_result = server
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (sqls_service, mut sqls_requests) =
+        LanguageServerService::stdio("vscode-json-languageserver", &["--stdio"])?;
+    let sqls = Server::new(sqls_service);
+
+    let join_request_handler = tokio::spawn(async move {
+        while let Ok(request) = sqls_requests.recv().await {
+            let request_str = serde_json::to_string(&request).unwrap();
+            if request.id().is_some() {
+                println!("Received Request from Sqls: {}", request_str);
+            } else {
+                println!("Received Notification from Sqls: {}", request_str);
+            }
+        }
+    });
+
+    let server_capabilities = sqls
         .initialize(InitializeParams {
-            process_id: Some(process::id()),
+            process_id: Some(std::process::id()),
             capabilities: ClientCapabilities {
+                general: Some(GeneralClientCapabilities {
+                    position_encodings: Some(vec![PositionEncodingKind::UTF8]),
+                    ..Default::default()
+                }),
                 text_document: Some(TextDocumentClientCapabilities {
-                    semantic_tokens: Some(SemanticTokensClientCapabilities {
-                        requests: SemanticTokensClientCapabilitiesRequests {
-                            range: Some(false),
-                            full: Some(SemanticTokensFullOptions::Bool(true)),
-                        },
+                    synchronization: Some(TextDocumentSyncClientCapabilities {
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -34,114 +49,31 @@ async fn main() -> Result<(), jsonrpc::Error> {
             ..Default::default()
         })
         .await?;
-    println!("{initialize_result:#?}");
+    println!(
+        "SQLS capabilities: {}",
+        serde_json::to_string_pretty(&server_capabilities)?
+    );
 
-    server.initialized().await;
-    println!("initialized");
+    sqls.initialized(InitializedParams {}).await;
 
-    let example_document = TextDocumentItem {
-        uri: Url::parse("file://select_children.sql").unwrap(),
-        language_id: "sql".to_owned(),
-        version: 1,
-        text: "SELECT children FROM Students".to_owned(),
-    };
-    let example_id = TextDocumentIdentifier {
-        uri: example_document.uri.clone(),
-    };
+    let test_uri =
+        Uri::from_file_path(std::env::current_dir()?.join("testbed/file1.json")).unwrap();
+    let mut text = String::new();
+    let _ = std::fs::File::open(test_uri.to_file_path().unwrap())?.read_to_string(&mut text)?;
+    sqls.did_open(DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: test_uri,
+            language_id: "json".into(),
+            version: 0,
+            text: text,
+        },
+    })
+    .await;
 
-    server
-        .send_notification::<DidOpenTextDocument>(DidOpenTextDocumentParams {
-            text_document: example_document.clone(),
-        })
-        .await;
+    sqls.shutdown().await?;
 
-    server
-        .send_notification::<DidChangeTextDocument>(DidChangeTextDocumentParams {
-            text_document: VersionedTextDocumentIdentifier {
-                uri: example_id.uri,
-                version: 2,
-            },
-            content_changes: vec![TextDocumentContentChangeEvent {
-                range: Some(Range {
-                    start: Position {
-                        line: 0,
-                        character: 28,
-                    },
-                    end: Position {
-                        line: 0,
-                        character: 28,
-                    },
-                }),
-                range_length: None,
-                text: " WHERE children = \"10\"".to_owned(),
-            }],
-        })
-        .await;
+    sqls.exit().await?;
 
-    tokio::time::timeout(Duration::from_secs(1), handle)
-        .await
-        .expect_err("Handler crashed");
-    server.shutdown().await?;
-    server.exit().await;
-
-    /*let tokens: SemanticTokensResult = server
-        .send_request::<SemanticTokensFullRequest>(SemanticTokensParams {
-            text_document: example_id,
-            work_done_progress_params: WorkDoneProgressParams {
-                work_done_token: None,
-            },
-            partial_result_params: PartialResultParams {
-                partial_result_token: None,
-            },
-        })
-        .await
-        .expect("Error computing semantic tokens")
-        .unwrap();
-
-    println!("{tokens:?}");*/
-
+    join_request_handler.await?;
     Ok(())
-}
-
-async fn message_loop(mut rx: Receiver<ServerMessage>) {
-    let mut stdout = tokio::io::stdout();
-    loop {
-        let msg = rx.try_recv();
-        match msg {
-            Err(TryRecvError::Disconnected) => break,
-            Err(TryRecvError::Empty) => {
-                // stdout.write_all(format!("EMPTY {counter}\n").as_bytes()).await.expect("UNABLE TO WRITE TO STDOUT");
-            }
-            Ok(ServerMessage::Notification(msg)) => match msg.method.as_str() {
-                "window/logMessage" => {
-                    let params: LogMessageParams =
-                        serde_json::from_value(msg.params.expect("Missing parameters"))
-                            .expect("Invalid parameters");
-                    stdout
-                        .write_all(format!("{}\n", params.message).as_bytes())
-                        .await
-                        .expect("UNABLE TO WRITE TO STDOUT");
-                }
-                "textDocument/publishDiagnostics" => {
-                    let params: PublishDiagnosticsParams =
-                        serde_json::from_value(msg.params.expect("Missing parameters").clone())
-                            .expect("Invalid parameters");
-                    for diagnostic in params.diagnostics {
-                        stdout
-                            .write_all(format!("PARSE ERROR: {:#?}\n", diagnostic.range).as_bytes())
-                            .await
-                            .unwrap();
-                    }
-                }
-                _ => {
-                    todo!("notification {} not implemented", msg.method)
-                }
-            },
-            Ok(ServerMessage::Request(msg)) => match msg.method() {
-                _ => {
-                    todo!("result {} not implemented", msg.method())
-                }
-            },
-        }
-    }
 }
