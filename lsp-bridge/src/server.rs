@@ -1,13 +1,13 @@
-use std::{
-    borrow::Cow,
-    sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
-    },
-};
-
+use crate::transport::ExitedError;
+use futures::{Stream, StreamExt, future::BoxFuture};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::{
+    borrow::Cow, pin::Pin, sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    }, task::Poll,
+};
 use tokio::sync::RwLock;
 use tower::Service;
 use tower_lsp_server::{
@@ -16,11 +16,16 @@ use tower_lsp_server::{
     ls_types::*,
 };
 
-use crate::transport::ExitedError;
-
+#[derive(Debug)]
 pub struct Server<S> {
-    server_socket: Arc<RwLock<S>>,
-    current_id: AtomicU32,
+    service: Arc<RwLock<S>>,
+    current_id: Arc<AtomicU32>,
+}
+
+impl<S> Clone for Server<S> {
+    fn clone(&self) -> Self {
+        Self { service: self.service.clone(), current_id: self.current_id.clone() }
+    }
 }
 
 impl<S> Server<S>
@@ -29,13 +34,13 @@ where
 {
     pub fn new(socket: S) -> Self {
         Self {
-            server_socket: Arc::new(RwLock::new(socket)),
-            current_id: AtomicU32::new(0),
+            service: Arc::new(RwLock::new(socket)),
+            current_id: Arc::new(AtomicU32::new(0)),
         }
     }
 
     pub async fn exit(&self) -> JrpcResult<()> {
-        self.server_socket
+        self.service
             .write()
             .await
             .call(Self::create_simple_notification("exit"))
@@ -112,7 +117,7 @@ where
 {
     async fn initialize(&self, params: InitializeParams) -> JrpcResult<InitializeResult> {
         let response = self
-            .server_socket
+            .service
             .write()
             .await
             .call(self.create_request("initialize", params))
@@ -122,7 +127,7 @@ where
 
     async fn initialized(&self, params: InitializedParams) {
         let _ = self
-            .server_socket
+            .service
             .write()
             .await
             .call(Self::create_notification("initialized", params))
@@ -131,7 +136,7 @@ where
 
     async fn shutdown(&self) -> JrpcResult<()> {
         Self::process_response(
-            self.server_socket
+            self.service
                 .write()
                 .await
                 .call(self.create_simple_request("shutdown"))
@@ -141,10 +146,46 @@ where
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let _ = self
-            .server_socket
+            .service
             .write()
             .await
             .call(Self::create_notification("textDocument/didOpen", params))
             .await;
     }
 }
+
+impl<S> Service<Request> for Server<S>
+where
+    S: Service<Request, Response = Option<Response>, Error = ExitedError> + Send + Sync + 'static,
+    <S as Service<Request>>::Future: Send,
+{
+    type Response = Option<Response>;
+    type Error = ExitedError;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    fn poll_ready(&mut self, _cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: Request) -> Self::Future {
+        let write_guard = self.service.clone().write_owned();
+
+        Box::pin(async move {
+            let mut write_guard = write_guard.await;
+            write_guard.call(req).await
+        })
+    }
+}
+
+impl<S> Stream for Server<S> 
+where
+    S: Stream<Item = Request> + Unpin
+{
+    type Item = Request;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+        self.service.try_write().map(|mut guard| guard.poll_next_unpin(cx)).unwrap_or_else(|_| Poll::Pending)
+    }
+}
+
+

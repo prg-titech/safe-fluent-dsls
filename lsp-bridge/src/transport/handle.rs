@@ -21,7 +21,7 @@ pub enum Message {
 
 pub trait LanguageServerHandle
 where
-    Self: Send + Sync + 'static,
+    Self: Sink<Request> + Stream<Item = Message> + Send + Sync + 'static,
 {
     type Requests: Sink<Request> + Unpin + 'static;
     type Responses: Stream<Item = Message> + Send;
@@ -81,6 +81,46 @@ fn to_jsonrpc_error(err: ParseError) -> jsonrpc::Error {
     match err {
         ParseError::Body(err) if err.is_data() => jsonrpc::Error::invalid_request(),
         _ => jsonrpc::Error::parse_error(),
+    }
+}
+
+impl Sink<Request> for MpscHandle {
+    type Error = <Sender<Request> as Sink<Request>>::Error;
+
+    fn poll_ready(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.tx.poll_ready(cx)
+    }
+
+    fn start_send(mut self: std::pin::Pin<&mut Self>, item: Request) -> Result<(), Self::Error> {
+        self.tx.start_send(item)
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.tx.poll_flush_unpin(cx)
+    }
+
+    fn poll_close(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.tx.poll_close_unpin(cx)
+    }
+}
+
+impl Stream for MpscHandle {
+    type Item = Message;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.rx.poll_next_unpin(cx)
     }
 }
 

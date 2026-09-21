@@ -1,36 +1,25 @@
 use std::io::Read;
-
 use tower_lsp_server::LanguageServer;
 use tower_lsp_server::ls_types::{
     ClientCapabilities, DidOpenTextDocumentParams, GeneralClientCapabilities, InitializeParams,
     InitializedParams, PositionEncodingKind, TextDocumentClientCapabilities, TextDocumentItem,
     TextDocumentSyncClientCapabilities, Uri,
 };
-
-use crate::{server::Server, transport::LanguageServerService};
+use futures::StreamExt;
+use crate::server::Server;
+use crate::{transport::LanguageServerService};
 
 mod codec;
 mod server;
 pub mod transport;
+pub mod bridge;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (sqls_service, mut sqls_requests) =
-        LanguageServerService::stdio("vscode-json-languageserver", &["--stdio"])?;
-    let sqls = Server::new(sqls_service);
+    let json_service = LanguageServerService::stdio("vscode-json-languageserver", &["--stdio"])?;
+    let mut json_ls = Server::new(json_service);
 
-    let join_request_handler = tokio::spawn(async move {
-        while let Ok(request) = sqls_requests.recv().await {
-            let request_str = serde_json::to_string(&request).unwrap();
-            if request.id().is_some() {
-                println!("Received Request from Sqls: {}", request_str);
-            } else {
-                println!("Received Notification from Sqls: {}", request_str);
-            }
-        }
-    });
-
-    let server_capabilities = sqls
+    let server_capabilities = json_ls
         .initialize(InitializeParams {
             process_id: Some(std::process::id()),
             capabilities: ClientCapabilities {
@@ -54,13 +43,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::to_string_pretty(&server_capabilities)?
     );
 
-    sqls.initialized(InitializedParams {}).await;
+    json_ls.initialized(InitializedParams {}).await;
+
+    println!("initialized");
 
     let test_uri =
         Uri::from_file_path(std::env::current_dir()?.join("testbed/file1.json")).unwrap();
     let mut text = String::new();
     let _ = std::fs::File::open(test_uri.to_file_path().unwrap())?.read_to_string(&mut text)?;
-    sqls.did_open(DidOpenTextDocumentParams {
+    json_ls.did_open(DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
             uri: test_uri,
             language_id: "json".into(),
@@ -70,10 +61,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .await;
 
-    sqls.shutdown().await?;
+    println!("file opened");
 
-    sqls.exit().await?;
+    let request = json_ls.next().await.unwrap();
+    println!("{}", serde_json::to_string(&request).unwrap());
 
-    join_request_handler.await?;
+    json_ls.shutdown().await?;
+
+    println!("shutdown signal send");
+
+    json_ls.exit().await?;
+
     Ok(())
 }

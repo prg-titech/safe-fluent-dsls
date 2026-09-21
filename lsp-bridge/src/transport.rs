@@ -1,7 +1,13 @@
 pub mod handle;
+pub mod socket;
 
+use crate::transport::handle::{LanguageServerHandle, Message, MpscHandle};
+use crate::transport::socket::{LanguageServerSocket, Pending, SendError};
+use futures::channel::mpsc::{self, UnboundedReceiver};
+use futures::channel::oneshot;
+use futures::{FutureExt, SinkExt, Stream, StreamExt, join};
 use std::ffi::OsStr;
-use std::marker::PhantomData;
+use std::mem;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::task::Poll;
@@ -9,16 +15,8 @@ use std::{
     fmt::{self, Display, Formatter},
     pin::Pin,
 };
-
-use dashmap::{DashMap, Entry};
-use futures::channel::mpsc::{self, UnboundedReceiver};
-use futures::channel::oneshot;
-use futures::{FutureExt, Sink, SinkExt, StreamExt};
-use log::warn;
 use tower::Service;
-use tower_lsp_server::jsonrpc::{self, Id, Request, Response};
-
-use crate::transport::handle::{LanguageServerHandle, Message, MpscHandle};
+use tower_lsp_server::jsonrpc::{self, Request, Response};
 
 /// Error that occurs when attempting to call the language server after it has already exited.
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
@@ -42,65 +40,23 @@ impl From<ExitedError> for jsonrpc::Error {
     }
 }
 
-pub struct LanguageServerService<H, Tx> {
-    request_tx: Tx,
-    pending_requests: Arc<DashMap<Id, Vec<oneshot::Sender<Response>>>>,
-    phantom_handle: PhantomData<H>,
-}
-
-impl<H> LanguageServerService<H, <H as LanguageServerHandle>::Requests>
-where
-    H: LanguageServerHandle,
-{
-    pub fn start(handle: H) -> (Self, UnboundedReceiver<Request>) {
-        let (tx, responses_rx) = handle.split();
-        let mut responses_rx = Box::pin(responses_rx);
-        let (mut server_requests_tx, server_requests_rx) = mpsc::unbounded();
-        let pending_requests = Arc::new(DashMap::<Id, Vec<oneshot::Sender<Response>>>::new());
-        let _pending_requests = pending_requests.clone();
-
-        tokio::spawn(async move {
-            while let Some(m) = responses_rx.next().await {
-                match m {
-                    Message::Request(request) => {
-                        if let Err(_) = server_requests_tx.send(request).await {
-                            break;
-                        }
-                    }
-                    Message::Response(response) => {
-                        match _pending_requests.entry(response.id().clone()) {
-                            Entry::Occupied(mut o) => {
-                                let _ = o.get_mut().remove(0).send(response);
-                                if o.get().is_empty() {
-                                    o.remove();
-                                }
-                            }
-                            Entry::Vacant(_) => warn!(
-                                "Cannot map response to request: {}",
-                                serde_json::to_string(&response).unwrap()
-                            ),
-                        }
-                    }
-                }
-            }
-        });
-
-        (
-            LanguageServerService {
-                request_tx: tx,
-                pending_requests,
-                phantom_handle: PhantomData::default(),
-            },
-            server_requests_rx,
-        )
+impl From<SendError> for ExitedError {
+    fn from(value: SendError) -> Self {
+        match value {
+            SendError::Disconnected => ExitedError,
+            SendError::Full => unreachable!("Socket is full despite waiting until free"),
+            SendError::UnknownId(_) => unreachable!(),
+        }
     }
 }
 
-impl LanguageServerService<MpscHandle, <MpscHandle as LanguageServerHandle>::Requests> {
-    pub fn stdio<S: AsRef<OsStr>>(
-        command: S,
-        args: &[S],
-    ) -> Result<(Self, UnboundedReceiver<Request>), std::io::Error> {
+pub struct LanguageServerService {
+    request_rx: UnboundedReceiver<Request>,
+    socket: LanguageServerSocket,
+}
+
+impl LanguageServerService {
+    pub fn stdio<S: AsRef<OsStr>>(command: S, args: &[S]) -> Result<Self, std::io::Error> {
         let mut child = tokio::process::Command::new(command)
             .args(args)
             .stdin(Stdio::piped())
@@ -110,24 +66,52 @@ impl LanguageServerService<MpscHandle, <MpscHandle as LanguageServerHandle>::Req
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
         let handle = MpscHandle::from_stdio(4, stdout, stdin);
-        Ok(LanguageServerService::start(handle))
+        let (handle_request_tx, mut message_rx) = LanguageServerHandle::split(handle);
+        let (socket_request_tx, socket_request_rx) = mpsc::channel(0);
+        let (mut request_tx, request_rx) = mpsc::unbounded::<Request>();
+        let (mut response_tx, response_rx) = mpsc::channel(0);
+
+        let socket = LanguageServerSocket::new(socket_request_tx, Arc::new(Pending::default()));
+        let _socket = socket.clone();
+
+        tokio::spawn(async move {
+            let forward_requests = socket_request_rx.map(|r| Ok(r)).forward(handle_request_tx);
+            let forward_responses = response_rx
+                .map(|r| Ok(Message::Response(r)))
+                .forward(_socket);
+            let forward_messages = async {
+                while let Ok(message) = message_rx.recv().await {
+                    match message {
+                        Message::Request(request) => {
+                            if request_tx.send(request).await.is_err() {
+                                break;
+                            }
+                        }
+                        Message::Response(response) => {
+                            if response_tx.send(response).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            };
+
+            join!(forward_requests, forward_responses, forward_messages)
+        });
+        Ok(Self { request_rx, socket })
     }
 }
 
-impl<H> Service<Request> for LanguageServerService<H, <H as LanguageServerHandle>::Requests>
-where
-    H: LanguageServerHandle,
-    <H as LanguageServerHandle>::Requests: Clone,
-{
+impl Service<Request> for LanguageServerService {
     type Response = Option<Response>;
     type Error = ExitedError;
-    type Future = LsRequest<<H as LanguageServerHandle>::Requests>;
+    type Future = LsRequest;
 
     fn poll_ready(
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        match self.request_tx.poll_ready_unpin(cx) {
+        match self.socket.poll_ready_unpin(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(_)) => Poll::Ready(Err(ExitedError)),
@@ -135,78 +119,71 @@ where
     }
 
     fn call(&mut self, req: Request) -> Self::Future {
-        let rx = if let Some(id) = req.id().cloned() {
-            let (tx, rx) = oneshot::channel();
-            match self.pending_requests.entry(id) {
-                Entry::Occupied(mut v) => v.get_mut().push(tx),
-                Entry::Vacant(v) => {
-                    v.insert(vec![tx]);
-                }
-            }
-            Some(rx)
-        } else {
-            None
-        };
-
         LsRequest {
-            request: Some(req),
-            tx: self.request_tx.clone(),
-            rx: rx,
-            send_started: false,
-            send_done: false,
+            socket: self.socket.clone(),
+            state: LsRequestState::SendPending(req),
         }
     }
 }
 
-pub struct LsRequest<Tx> {
-    request: Option<Request>,
-    tx: Tx,
-    rx: Option<oneshot::Receiver<Response>>,
-    send_started: bool,
-    send_done: bool,
+impl Stream for LanguageServerService {
+    type Item = Request;
+
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        self.request_rx.poll_next_unpin(cx)
+    }
 }
 
-impl<Tx> Future for LsRequest<Tx>
-where
-    Tx: Sink<Request> + Unpin,
-{
+enum LsRequestState {
+    SendPending(Request),
+    SendStarted(Option<oneshot::Receiver<Response>>),
+    ReceivePending(oneshot::Receiver<Response>),
+    TemporaryEmpty,
+}
+
+impl LsRequestState {
+    pub fn take(&mut self) -> LsRequestState {
+        mem::replace(self, LsRequestState::TemporaryEmpty)
+    }
+}
+
+pub struct LsRequest {
+    socket: LanguageServerSocket,
+    state: LsRequestState,
+}
+
+impl Future for LsRequest {
     type Output = Result<Option<Response>, ExitedError>;
 
     fn poll(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        if self.send_done {
-            match self.rx.as_mut().unwrap().poll_unpin(cx) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(Ok(r)) => Poll::Ready(Ok(Some(r))),
-                Poll::Ready(Err(_)) => Poll::Ready(Err(ExitedError)),
+        let (next_state, poll) = match self.state.take() {
+            LsRequestState::SendPending(request) => {
+                let rx = request.id().cloned().map(|id| self.socket.insert(id));
+                self.socket
+                    .start_send_unpin(Message::Request(request.to_owned()))?;
+                (LsRequestState::SendStarted(rx), None)
             }
-        } else if self.send_started {
-            match self.tx.poll_flush_unpin(cx) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(Ok(())) => {
-                    if self.rx.is_none() {
-                        return Poll::Ready(Ok(None));
-                    }
-                    self.send_done = true;
-                    self.poll(cx)
+            LsRequestState::SendStarted(rx) => match (self.socket.poll_flush_unpin(cx), rx) {
+                (Poll::Pending, rx) => (LsRequestState::SendStarted(rx), Some(Poll::Pending)),
+                (Poll::Ready(Ok(_)), Some(rx)) => (LsRequestState::ReceivePending(rx), None),
+                (Poll::Ready(Ok(_)), None) => return Poll::Ready(Ok(None)),
+                (Poll::Ready(Err(_)), _) => return Poll::Ready(Err(ExitedError)),
+            },
+            LsRequestState::ReceivePending(mut rx) => match rx.poll_unpin(cx) {
+                Poll::Pending => (LsRequestState::ReceivePending(rx), Some(Poll::Pending)),
+                Poll::Ready(result) => {
+                    return Poll::Ready(result.map(|r| Some(r)).map_err(|_| ExitedError));
                 }
-                Poll::Ready(Err(_)) => Poll::Ready(Err(ExitedError)),
-            }
-        } else {
-            match self.tx.poll_ready_unpin(cx) {
-                Poll::Pending => Poll::Pending,
-                Poll::Ready(Ok(())) => {
-                    let request = self.request.take().unwrap();
-                    if let Err(_) = self.tx.start_send_unpin(request) {
-                        return Poll::Ready(Err(ExitedError));
-                    }
-                    self.send_started = true;
-                    self.poll(cx)
-                }
-                Poll::Ready(Err(_)) => Poll::Ready(Err(ExitedError)),
-            }
-        }
+            },
+            LsRequestState::TemporaryEmpty => unreachable!(),
+        };
+        self.state = next_state;
+        poll.unwrap_or_else(|| self.poll(cx))
     }
 }
