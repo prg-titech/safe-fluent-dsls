@@ -11,7 +11,7 @@ use dashmap::{DashMap, Entry};
 use futures::{
     Sink, SinkExt, channel::{mpsc::Sender, oneshot}, future::BoxFuture,
 };
-use tower_lsp_server::jsonrpc::{Id, Request, Response};
+use tower_lsp_server::{jsonrpc::{Id, Request, Response}};
 
 use crate::transport::handle::Message;
 
