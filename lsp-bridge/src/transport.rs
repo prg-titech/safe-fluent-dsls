@@ -1,22 +1,95 @@
-pub mod handle;
-pub mod socket;
-
-use crate::transport::handle::{LanguageServerHandle, Message, MpscHandle};
-use crate::transport::socket::{LanguageServerSocket, Pending, SendError};
-use futures::channel::mpsc::{self, UnboundedReceiver};
-use futures::channel::oneshot;
-use futures::{FutureExt, SinkExt, Stream, StreamExt, join};
-use std::ffi::OsStr;
-use std::mem;
-use std::process::Stdio;
-use std::sync::Arc;
-use std::task::Poll;
 use std::{
+    collections::VecDeque,
+    error::Error,
+    ffi::OsStr,
     fmt::{self, Display, Formatter},
     pin::Pin,
+    process::Stdio,
+    sync::Arc,
+    task::{Context, Poll},
 };
+
+use dashmap::{DashMap, Entry};
+use futures::{
+    FutureExt, Sink, SinkExt, Stream, StreamExt,
+    channel::{mpsc, oneshot},
+    join,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    process::Command,
+};
+use tokio_util::codec::{FramedRead, FramedWrite};
 use tower::Service;
-use tower_lsp_server::jsonrpc::{self, Request, Response};
+use tower_lsp_server::jsonrpc::{self, Id, Request, Response};
+
+use crate::codec::LanguageServerCodec;
+
+#[derive(Deserialize, Serialize)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
+#[serde(untagged)]
+pub enum Message {
+    /// A response message.
+    Response(Response),
+    /// A request or notification message.
+    Request(Request),
+}
+
+pub trait LsHandle
+where
+    Self:
+        Service<Request, Response = Option<Response>, Error = ExitedError> + Stream<Item = Message>,
+{
+    type LsService: Service<Request, Response = Option<Response>, Error = ExitedError>;
+    type LsSocket: Stream<Item = Message>;
+
+    fn from_stdio<I, O>(input: I, output: O) -> Self
+    where
+        I: AsyncRead + Unpin + Send + 'static,
+        O: AsyncWrite + Send + 'static;
+
+    fn split(self) -> (Self::LsService, Self::LsSocket);
+}
+
+pub trait LsHandleExt: LsHandle + Sized {
+    fn spawn<S: AsRef<OsStr>, S2: AsRef<OsStr>, I: IntoIterator<Item = S2>>(
+        command: S,
+        args: I,
+    ) -> Result<Self, std::io::Error> {
+        let mut child = Command::new(command)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let input = child.stdout.take().unwrap();
+        let output = child.stdin.take().unwrap();
+
+        Ok(Self::from_stdio(input, output))
+    }
+}
+
+impl<T: LsHandle> LsHandleExt for T {}
+
+#[derive(Debug, Clone)]
+pub struct Pending {
+    pending: Arc<DashMap<Id, VecDeque<oneshot::Sender<Response>>>>,
+    unmatched_responses: mpsc::UnboundedSender<Response>,
+}
+
+impl Pending {
+    pub fn new() -> (Self, mpsc::UnboundedReceiver<Response>) {
+        let (response_tx, response_rx) = mpsc::unbounded();
+        (
+            Self {
+                pending: Arc::default(),
+                unmatched_responses: response_tx,
+            },
+            response_rx,
+        )
+    }
+}
 
 /// Error that occurs when attempting to call the language server after it has already exited.
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
@@ -50,140 +123,320 @@ impl From<SendError> for ExitedError {
     }
 }
 
-pub struct LanguageServerService {
-    request_rx: UnboundedReceiver<Request>,
-    socket: LanguageServerSocket,
-}
-
-impl LanguageServerService {
-    pub fn stdio<S: AsRef<OsStr>>(command: S, args: &[S]) -> Result<Self, std::io::Error> {
-        let mut child = tokio::process::Command::new(command)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()?;
-
-        let stdin = child.stdin.take().unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let handle = MpscHandle::from_stdio(4, stdout, stdin);
-        let (handle_request_tx, mut message_rx) = LanguageServerHandle::split(handle);
-        let (socket_request_tx, socket_request_rx) = mpsc::channel(0);
-        let (mut request_tx, request_rx) = mpsc::unbounded::<Request>();
-        let (mut response_tx, response_rx) = mpsc::channel(0);
-
-        let socket = LanguageServerSocket::new(socket_request_tx, Arc::new(Pending::default()));
-        let _socket = socket.clone();
-
-        tokio::spawn(async move {
-            let forward_requests = socket_request_rx.map(|r| Ok(r)).forward(handle_request_tx);
-            let forward_responses = response_rx
-                .map(|r| Ok(Message::Response(r)))
-                .forward(_socket);
-            let forward_messages = async {
-                while let Ok(message) = message_rx.recv().await {
-                    match message {
-                        Message::Request(request) => {
-                            if request_tx.send(request).await.is_err() {
-                                break;
-                            }
-                        }
-                        Message::Response(response) => {
-                            if response_tx.send(response).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                }
-            };
-
-            join!(forward_requests, forward_responses, forward_messages)
-        });
-        Ok(Self { request_rx, socket })
+impl From<mpsc::SendError> for ExitedError {
+    fn from(_: mpsc::SendError) -> Self {
+        ExitedError
     }
 }
 
-impl Service<Request> for LanguageServerService {
+impl From<oneshot::Canceled> for ExitedError {
+    fn from(_: oneshot::Canceled) -> Self {
+        ExitedError
+    }
+}
+
+impl From<tower_lsp_server::ExitedError> for ExitedError {
+    fn from(_: tower_lsp_server::ExitedError) -> Self {
+        ExitedError
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SendError {
+    Full,
+    Disconnected,
+    UnknownId(Id),
+}
+
+impl Display for SendError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "SendError: ")
+    }
+}
+
+impl Error for SendError {}
+
+impl From<futures::channel::mpsc::SendError> for SendError {
+    fn from(value: futures::channel::mpsc::SendError) -> Self {
+        if value.is_full() {
+            SendError::Full
+        } else {
+            SendError::Disconnected
+        }
+    }
+}
+
+impl<T> From<mpsc::TrySendError<T>> for SendError {
+    fn from(value: mpsc::TrySendError<T>) -> Self {
+        if value.is_full() {
+            SendError::Full
+        } else {
+            SendError::Disconnected
+        }
+    }
+}
+
+impl From<tower_lsp_server::ExitedError> for SendError {
+    fn from(_: tower_lsp_server::ExitedError) -> Self {
+        SendError::Disconnected
+    }
+}
+
+impl Pending {
+    pub fn insert(&self, id: Id) -> Option<oneshot::Receiver<Response>> {
+        if id == Id::Null {
+            return None;
+        }
+
+        let (response_tx, response_rx) = oneshot::channel();
+        match self.pending.entry(id) {
+            Entry::Occupied(mut o) => o.get_mut().push_back(response_tx),
+            Entry::Vacant(v) => {
+                v.insert(vec![response_tx].into());
+            }
+        };
+        Some(response_rx)
+    }
+}
+
+impl Sink<Response> for Pending {
+    type Error = SendError;
+
+    fn poll_ready(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(self: std::pin::Pin<&mut Self>, item: Response) -> Result<(), Self::Error> {
+        if let Entry::Occupied(mut o) = self.pending.entry(item.id().clone()) {
+            o.get_mut()
+                .pop_front()
+                .unwrap()
+                .send(item)
+                .map_err(|_| SendError::Disconnected)?;
+            if o.get().is_empty() {
+                o.remove();
+            }
+            Ok(())
+        } else {
+            self.unmatched_responses
+                .unbounded_send(item)
+                .map_err(|err| err.into())
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[derive(Debug)]
+pub struct CallLanguageServer {
+    request: Option<Request>,
+    ls_sender: BaseLsService,
+    send_done: bool,
+    response_rx: Option<oneshot::Receiver<Response>>,
+}
+
+impl CallLanguageServer {
+    pub fn new(request: Request, ls_sender: BaseLsService) -> Self {
+        CallLanguageServer {
+            request: Some(request),
+            ls_sender,
+            send_done: false,
+            response_rx: None,
+        }
+    }
+}
+
+impl Future for CallLanguageServer {
+    type Output = Result<Option<Response>, ExitedError>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if let Some(request) = self.request.take() {
+            self.response_rx = request
+                .id()
+                .cloned()
+                .and_then(|id| self.ls_sender.pending.insert(id));
+            self.ls_sender
+                .output_tx
+                .start_send_unpin(Message::Request(request))?;
+        }
+        if self.send_done {
+            if let Some(response_rx) = &mut self.response_rx {
+                let poll = response_rx.poll_unpin(cx)?;
+                if let Poll::Ready(response) = poll {
+                    Poll::Ready(Ok(Some(response)))
+                } else {
+                    Poll::Pending
+                }
+            } else {
+                Poll::Ready(Ok(None))
+            }
+        } else {
+            let poll = self.ls_sender.output_tx.poll_flush_unpin(cx)?;
+            if poll.is_pending() {
+                Poll::Pending
+            } else {
+                self.send_done = true;
+                self.poll(cx)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BaseLsService {
+    pending: Pending,
+    pub output_tx: mpsc::Sender<Message>,
+}
+
+impl Service<Request> for BaseLsService {
     type Response = Option<Response>;
     type Error = ExitedError;
-    type Future = LsRequest;
+    type Future = CallLanguageServer;
 
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        match self.socket.poll_ready_unpin(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(_)) => Poll::Ready(Err(ExitedError)),
-        }
+    fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.output_tx.poll_ready_unpin(cx).map_err(|e| e.into())
     }
 
     fn call(&mut self, req: Request) -> Self::Future {
-        LsRequest {
-            socket: self.socket.clone(),
-            state: LsRequestState::SendPending(req),
+        CallLanguageServer::new(req, self.clone())
+    }
+}
+
+#[derive(Debug)]
+pub struct BaseLsSocket {
+    unmatched_responses_rx: mpsc::UnboundedReceiver<Response>,
+    pending_requests: mpsc::UnboundedReceiver<Request>,
+
+    /// This variable is necessary to toggle between polling the response stream or the request stream first, to ensure fairness
+    was_previous_response: bool,
+}
+
+impl Stream for BaseLsSocket {
+    type Item = Message;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.was_previous_response {
+            match self.pending_requests.poll_next_unpin(cx) {
+                Poll::Pending | Poll::Ready(None) => self
+                    .unmatched_responses_rx
+                    .poll_next_unpin(cx)
+                    .map(|m| m.map(|m| Message::Response(m))),
+                Poll::Ready(Some(request)) => {
+                    self.was_previous_response = false;
+                    Poll::Ready(Some(Message::Request(request)))
+                }
+            }
+        } else {
+            match self.unmatched_responses_rx.poll_next_unpin(cx) {
+                Poll::Pending | Poll::Ready(None) => self
+                    .pending_requests
+                    .poll_next_unpin(cx)
+                    .map(|m| m.map(|m| Message::Request(m))),
+                Poll::Ready(Some(response)) => {
+                    self.was_previous_response = true;
+                    Poll::Ready(Some(Message::Response(response)))
+                }
+            }
         }
     }
 }
 
-impl Stream for LanguageServerService {
-    type Item = Request;
+#[derive(Debug)]
+pub struct BaseLsHandle {
+    service: BaseLsService,
+    socket: BaseLsSocket,
+}
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        self.request_rx.poll_next_unpin(cx)
+impl Service<Request> for BaseLsHandle {
+    type Response = Option<Response>;
+    type Error = ExitedError;
+    type Future = CallLanguageServer;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request) -> Self::Future {
+        self.service.call(req)
     }
 }
 
-enum LsRequestState {
-    SendPending(Request),
-    SendStarted(Option<oneshot::Receiver<Response>>),
-    ReceivePending(oneshot::Receiver<Response>),
-    TemporaryEmpty,
-}
+impl Stream for BaseLsHandle {
+    type Item = Message;
 
-impl LsRequestState {
-    pub fn take(&mut self) -> LsRequestState {
-        mem::replace(self, LsRequestState::TemporaryEmpty)
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.socket.poll_next_unpin(cx)
     }
 }
 
-pub struct LsRequest {
-    socket: LanguageServerSocket,
-    state: LsRequestState,
-}
+impl LsHandle for BaseLsHandle {
+    type LsService = BaseLsService;
+    type LsSocket = BaseLsSocket;
 
-impl Future for LsRequest {
-    type Output = Result<Option<Response>, ExitedError>;
+    fn from_stdio<I, O>(input: I, output: O) -> Self
+    where
+        I: AsyncRead + Unpin + Send + 'static,
+        O: AsyncWrite + Send + 'static,
+    {
+        let mut framed_input = FramedRead::new(input, LanguageServerCodec::<Message>::default());
+        let (mut input_request_tx, input_request_rx) = mpsc::unbounded();
+        let (pending, unmatched_responses_rx) = Pending::new();
 
-    fn poll(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let (next_state, poll) = match self.state.take() {
-            LsRequestState::SendPending(request) => {
-                let rx = request.id().cloned().map(|id| self.socket.insert(id));
-                self.socket
-                    .start_send_unpin(Message::Request(request.to_owned()))?;
-                (LsRequestState::SendStarted(rx), None)
-            }
-            LsRequestState::SendStarted(rx) => match (self.socket.poll_flush_unpin(cx), rx) {
-                (Poll::Pending, rx) => (LsRequestState::SendStarted(rx), Some(Poll::Pending)),
-                (Poll::Ready(Ok(_)), Some(rx)) => (LsRequestState::ReceivePending(rx), None),
-                (Poll::Ready(Ok(_)), None) => return Poll::Ready(Ok(None)),
-                (Poll::Ready(Err(_)), _) => return Poll::Ready(Err(ExitedError)),
-            },
-            LsRequestState::ReceivePending(mut rx) => match rx.poll_unpin(cx) {
-                Poll::Pending => (LsRequestState::ReceivePending(rx), Some(Poll::Pending)),
-                Poll::Ready(result) => {
-                    return Poll::Ready(result.map(|r| Some(r)).map_err(|_| ExitedError));
+        let mut _pending = pending.clone();
+        let forward_input_messages = async move {
+            while let Some(message) = framed_input.next().await {
+                match message {
+                    Ok(Message::Request(request)) => input_request_tx.send(request).await?,
+                    Ok(Message::Response(response)) => _pending.send(response).await?,
+                    Err(err) => {
+                        _pending
+                            .send(Response::from_error(
+                                Id::Null,
+                                jsonrpc::Error {
+                                    code: jsonrpc::ErrorCode::ParseError,
+                                    message: "Parse error occurred".into(),
+                                    data: Some(json!({
+                                        "error": &err.to_string(),
+                                    })),
+                                },
+                            ))
+                            .await?
+                    }
                 }
-            },
-            LsRequestState::TemporaryEmpty => unreachable!(),
+            }
+            Ok::<_, SendError>(())
         };
-        self.state = next_state;
-        poll.unwrap_or_else(|| self.poll(cx))
+
+        let framed_output = FramedWrite::new(output, LanguageServerCodec::default());
+        let (output_message_tx, output_message_rx) = mpsc::channel(0);
+        let forward_output_messages = output_message_rx.map(|m| Ok(m)).forward(framed_output);
+        tokio::spawn(async move { join!(forward_input_messages, forward_output_messages) });
+
+        let service = BaseLsService {
+            pending,
+            output_tx: output_message_tx,
+        };
+        let socket = BaseLsSocket {
+            unmatched_responses_rx,
+            pending_requests: input_request_rx,
+            was_previous_response: false,
+        };
+        Self { service, socket }
+    }
+
+    fn split(self) -> (Self::LsService, Self::LsSocket) {
+        (self.service, self.socket)
     }
 }
