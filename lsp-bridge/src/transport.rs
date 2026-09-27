@@ -277,6 +277,7 @@ impl Future for CallLanguageServer {
                 if let Poll::Ready(response) = poll {
                     Poll::Ready(Ok(Some(response)))
                 } else {
+                    cx.waker().wake_by_ref();
                     Poll::Pending
                 }
             } else {

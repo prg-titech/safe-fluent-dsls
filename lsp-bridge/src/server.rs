@@ -1,6 +1,8 @@
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
-    borrow::Cow, sync::{Arc, atomic::AtomicI64}, task::{Context, Poll},
+    borrow::Cow,
+    sync::{Arc, atomic::AtomicI64},
+    task::{Context, Poll},
 };
 use tokio::sync::{OwnedRwLockWriteGuard, RwLock};
 use tower::Service;
@@ -47,10 +49,19 @@ impl Iterator for UniqueIdIter {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LsServer<S> {
     inner: Arc<RwLock<S>>,
     id_iter: UniqueIdIter,
+}
+
+impl<S> Clone for LsServer<S> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            id_iter: self.id_iter.clone(),
+        }
+    }
 }
 
 impl<S> LsServer<S> {
@@ -63,7 +74,7 @@ impl<S> LsServer<S> {
 
     pub async fn get_inner_mut(&self) -> OwnedRwLockWriteGuard<S> {
         self.inner.clone().write_owned().await
-    } 
+    }
 
     pub fn poll_write(&self, cx: &mut Context<'_>) -> Poll<OwnedRwLockWriteGuard<S>> {
         match self.inner.clone().try_write_owned() {
@@ -85,7 +96,7 @@ where
     where
         M: Into<Cow<'static, str>>,
         P: Serialize,
-        R: DeserializeOwned,
+        R: DeserializeOwned + std::fmt::Debug,
     {
         let request = Request::build(method)
             .params(serde_json::to_value(params).unwrap())
@@ -99,7 +110,36 @@ where
             .map_err(|e| e.into())?
             .unwrap();
         let (_, response) = result.into_parts();
-        response.and_then(|r| serde_json::from_value(r).unwrap())
+        match response {
+            Ok(value) => {
+                let r: R = serde_json::from_value(value).unwrap();
+                Ok(r)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn send_unit_request<M, P>(&self, method: M, params: P) -> Result<()>
+    where
+        M: Into<Cow<'static, str>>,
+        P: Serialize,
+    {
+        let request = Request::build(method)
+            .params(serde_json::to_value(params).unwrap())
+            .id(self.id_iter.next())
+            .finish();
+        let result = self
+            .get_inner_mut()
+            .await
+            .call(request)
+            .await
+            .map_err(|e| e.into())?
+            .unwrap();
+        let (_, response) = result.into_parts();
+        match response {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn send_notification<M, P>(&self, method: M, params: P)
@@ -113,6 +153,7 @@ where
         let _ = self.get_inner_mut().await.call(request).await;
     }
 
+    #[allow(unused)]
     pub async fn exit(&self) {
         self.send_notification("exit", ()).await
     }
@@ -123,7 +164,7 @@ where
     S: Service<Request, Response = Option<Response>> + Sync + Send + 'static,
     S::Error: Into<jsonrpc::Error>,
     S::Future: Send,
-{ 
+{
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         self.send_request("initialize", params).await
     }
@@ -133,7 +174,7 @@ where
     }
 
     async fn shutdown(&self) -> Result<()> {
-        self.send_request("shutdown", ()).await
+        self.send_unit_request("shutdown", ()).await
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {

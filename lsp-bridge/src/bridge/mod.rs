@@ -1,20 +1,22 @@
-mod router;
-
 use std::collections::HashSet;
+use std::fmt::Display;
 use std::task::Poll;
 
-use dashmap::{DashMap, DashSet};
+use dashmap::DashSet;
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt, TryFutureExt, join};
 use lazy_static::lazy_static;
+use serde::Serialize;
 use tokio::sync::OwnedRwLockWriteGuard;
-use tower::Service;
-use tower_lsp_server::jsonrpc::{Id, Request, Response, Result as JrpcResult};
+use tower::util::BoxService;
+use tower::{Layer, Service, ServiceExt};
+use tower_lsp_server::jsonrpc::{self, Id, Request, Response, Result as JrpcResult};
 use tower_lsp_server::{Client, ClientSocket, LanguageServer};
 use tower_lsp_server::{LspService, ls_types::*};
 
+use crate::logging::{LogLayer};
 use crate::server::LsServer;
-use crate::transport::{BaseLsHandle, BaseLsService, ExitedError, LsHandle, Message};
+use crate::transport::{ExitedError, LsHandle, Message};
 
 lazy_static! {
     static ref METHODS: HashSet<&'static str> = {
@@ -31,54 +33,31 @@ lazy_static! {
     };
 }
 
-#[derive(Debug, Clone)]
-pub struct BridgeInner {
+#[derive(Debug)]
+pub struct BridgeInner<S> {
+    #[allow(unused)]
     client: Client,
-    main_server: LsServer<BaseLsService>,
-    embedded_server: LsServer<BaseLsService>,
+    main_server: LsServer<S>,
+    embedded_server: LsServer<S>,
 
     // The following is just for testing
     json_files: DashSet<Uri>,
 }
 
-impl BridgeInner {
-    pub fn new(client: Client, main_server: BaseLsHandle, embedded_server: BaseLsHandle) -> Self {
-        let mut _client = client.clone();
-        let (main_server, mut main_socket) = LsHandle::split(main_server);
-        let (embedded_server, mut embedded_socket) = LsHandle::split(embedded_server);
-        let forward_main_socket = async move {
-            while let Some(m) = main_socket.next().await {
-                match m {
-                    Message::Request(request) => {
-                        let _ = _client.call(request).await;
-                    }
-                    Message::Response(_) => (),
-                }
-            }
-        };
-        let mut _client = client.clone();
-        let forward_embedded_socket = async move {
-            while let Some(m) = embedded_socket.next().await {
-                match m {
-                    Message::Request(request) => {
-                        let (method, id, params) = request.into_parts();
-                        let id = id.map(|id| Id::String(format!("embedded:{}", id.to_string())));
-                        let mut request_builder = Request::build(method);
-                        if let Some(id) = id {
-                            request_builder = request_builder.id(id);
-                        }
-                        if let Some(params) = params {
-                            request_builder = request_builder.params(params);
-                        }
-                        let request = request_builder.finish();
-                        let _ = _client.call(request).await;
-                    }
-                    Message::Response(_) => (),
-                }
-            }
-        };
-        tokio::spawn(async { join!(forward_main_socket, forward_embedded_socket) });
+impl<S> Clone for BridgeInner<S> {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            main_server: self.main_server.clone(),
+            embedded_server: self.embedded_server.clone(),
+            json_files: self.json_files.clone(),
+        }
+    }
+}
 
+impl<S> BridgeInner<S> {
+    pub fn new(client: Client, main_server: S, embedded_server: S) -> Self
+where {
         let main_server = LsServer::new(main_server);
         let embedded_server = LsServer::new(embedded_server);
 
@@ -91,7 +70,12 @@ impl BridgeInner {
     }
 }
 
-impl LanguageServer for BridgeInner {
+impl<S> LanguageServer for BridgeInner<S>
+where
+    S: Service<Request, Response = Option<Response>> + Sync + Send + 'static,
+    S::Error: Into<jsonrpc::Error>,
+    S::Future: Send,
+{
     async fn initialize(&self, params: InitializeParams) -> JrpcResult<InitializeResult> {
         let _ = self.embedded_server.initialize(params.clone()).await;
         self.main_server.initialize(params).await
@@ -135,63 +119,150 @@ impl LanguageServer for BridgeInner {
 }
 
 #[derive(Debug)]
-pub struct BridgeBuilder {
-    main_server: Option<BaseLsHandle>,
-    embedded_server: Option<BaseLsHandle>,
+pub struct BridgeBuilder<Hdl> {
+    main_server: Option<Hdl>,
+    embedded_server: Option<Hdl>,
+    client_log: Option<LogLayer>,
+    main_server_log: Option<LogLayer>,
+    embedded_server_log: Option<LogLayer>,
 }
 
-impl BridgeBuilder {
-    pub fn main_server(mut self, service: BaseLsHandle) -> Self {
+fn try_add_log_layer<Rq: Serialize, S>(
+    service: S,
+    log_layer: Option<LogLayer>,
+) -> BoxService<Rq, S::Response, S::Error>
+where
+    Rq: Serialize + 'static,
+    S: Service<Rq> + Send + Sync + 'static,
+    S::Response: Serialize + Send + 'static,
+    S::Error: Display + Send + 'static,
+    S::Future: Send + 'static,
+{
+    match log_layer {
+        Some(log_layer) => log_layer.layer(service).boxed(),
+        None => service.boxed(),
+    }
+    .boxed()
+}
+
+impl<Hdl> BridgeBuilder<Hdl> {
+    pub fn log_client(mut self, log_layer: LogLayer) -> Self {
+        self.client_log = Some(log_layer);
+        self
+    }
+
+    pub fn main_server(mut self, service: Hdl) -> Self {
         self.main_server = Some(service);
         self
     }
 
-    pub fn embedded_server(mut self, service: BaseLsHandle) -> Self {
+    pub fn log_main_server(mut self, log_layer: LogLayer) -> Self {
+        self.main_server_log = Some(log_layer);
+        self
+    }
+
+    pub fn embedded_server(mut self, service: Hdl) -> Self {
         self.embedded_server = Some(service);
         self
     }
 
-    pub fn build(self) -> Option<(Bridge, ClientSocket)> {
+    pub fn log_embedded_server(mut self, log_layer: LogLayer) -> Self {
+        self.embedded_server_log = Some(log_layer);
+        self
+    }
+
+    pub fn build(
+        self,
+    ) -> (
+        Bridge<BoxService<Request, Option<Response>, ExitedError>>,
+        ClientSocket,
+    )
+    where
+        Hdl: LsHandle + Send + Sync + 'static,
+        Hdl::LsService: Send + Sync + Unpin,
+        Hdl::LsSocket: Unpin + Send + Sync,
+        <Hdl::LsService as Service<Request>>::Future: Send,
+    {
         let Self {
             main_server,
             embedded_server,
+            client_log,
+            main_server_log,
+            embedded_server_log,
         } = self;
-        match (main_server, embedded_server) {
-            (Some(main_server), Some(embedded_server)) => {
-                let (lsp_service, client_socket) = LspService::new(|client| {
-                    BridgeInner::new(client, main_server, embedded_server)
-                });
-                Some((Bridge { inner: lsp_service }, client_socket))
-            }
-            _ => None,
-        }
+        let (main_server, mut main_socket) = LsHandle::split(main_server.unwrap());
+        let main_server = try_add_log_layer(main_server, main_server_log);
+
+        let (embedded_server, mut embedded_socket) = LsHandle::split(embedded_server.unwrap());
+        let embedded_server = try_add_log_layer(embedded_server, embedded_server_log);
+
+        let (lsp_service, client_socket) = LspService::new(move |client| {
+            let mut _client = client.clone();
+            let forward_main_socket = async move {
+                while let Some(m) = main_socket.next().await {
+                    match m {
+                        Message::Request(request) => {
+                            let _ = _client.call(request).await;
+                        }
+                        Message::Response(_) => (),
+                    }
+                }
+            };
+            let mut _client = client.clone();
+            let forward_embedded_socket = async move {
+                while let Some(m) = embedded_socket.next().await {
+                    match m {
+                        Message::Request(request) => {
+                            let (method, id, params) = request.into_parts();
+                            let id =
+                                id.map(|id| Id::String(format!("embedded:{}", id.to_string())));
+                            let mut request_builder = Request::build(method);
+                            if let Some(id) = id {
+                                request_builder = request_builder.id(id);
+                            }
+                            if let Some(params) = params {
+                                request_builder = request_builder.params(params);
+                            }
+                            let request = request_builder.finish();
+                            let _ = _client.call(request).await;
+                        }
+                        Message::Response(_) => (),
+                    }
+                }
+            };
+            tokio::spawn(async { join!(forward_main_socket, forward_embedded_socket) });
+
+            BridgeInner::new(client, main_server, embedded_server)
+        });
+
+        (Bridge { inner: lsp_service }, client_socket)
     }
 }
 
-impl Default for BridgeBuilder {
+impl<Hdl> Default for BridgeBuilder<Hdl> {
     fn default() -> Self {
         Self {
             main_server: Default::default(),
             embedded_server: Default::default(),
+            client_log: Default::default(),
+            main_server_log: Default::default(),
+            embedded_server_log: Default::default()
         }
     }
 }
 
-impl Bridge {
-    pub fn builder() -> BridgeBuilder {
-        BridgeBuilder::default()
-    }
+pub struct Bridge<S> {
+    inner: LspService<BridgeInner<S>>,
 }
 
-pub struct Bridge {
-    inner: LspService<BridgeInner>,
-}
-
-impl Service<Request> for Bridge {
+impl<S> Service<Request> for Bridge<S>
+where
+    S: Service<Request, Response = Option<Response>> + Sync + Send + Unpin + 'static,
+    S::Error: Into<jsonrpc::Error> + Into<ExitedError>,
+    S::Future: Send + Unpin,
+{
     type Response = Option<Response>;
-
     type Error = ExitedError;
-
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(
@@ -216,15 +287,20 @@ impl Service<Request> for Bridge {
     }
 }
 
-pub struct BridgeFuture {
+pub struct BridgeFuture<S: Service<Request>> {
     request: Option<Request>,
-    server: LsServer<BaseLsService>,
-    guard: Option<OwnedRwLockWriteGuard<BaseLsService>>,
+    server: LsServer<S>,
+    guard: Option<OwnedRwLockWriteGuard<S>>,
     is_ready: bool,
-    future: Option<<BaseLsService as Service<Request>>::Future>,
+    future: Option<<S as Service<Request>>::Future>,
 }
 
-impl Future for BridgeFuture {
+impl<S: Service<Request, Response = Option<Response>, Error = E>, E: Into<ExitedError>> Future
+    for BridgeFuture<S>
+where
+    S: Unpin,
+    S::Future: Unpin,
+{
     type Output = Result<Option<Response>, ExitedError>;
 
     fn poll(
