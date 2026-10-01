@@ -5,12 +5,14 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::sync::{OwnedRwLockWriteGuard, RwLock};
-use tower::Service;
+use tower::Layer;
 use tower_lsp_server::{
     LanguageServer,
-    jsonrpc::{self, Id, Request, Response, Result},
+    jsonrpc::{self, Id, Request, Result},
     ls_types::*,
 };
+
+use crate::transport::core::LsService;
 
 #[derive(Debug, Clone, Default)]
 struct UniqueIdIter {
@@ -46,6 +48,18 @@ impl Iterator for UniqueIdIter {
         } else {
             Id::Number(current_index)
         })
+    }
+}
+
+#[derive(Default, Clone, Copy)]
+#[allow(dead_code)]
+pub struct LsLayer;
+
+impl<S> Layer<S> for LsLayer {
+    type Service = LsServer<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        LsServer::new(inner)
     }
 }
 
@@ -89,7 +103,7 @@ impl<S> LsServer<S> {
 
 impl<S> LsServer<S>
 where
-    S: Service<Request, Response = Option<Response>>,
+    S: LsService,
     S::Error: Into<jsonrpc::Error>,
 {
     pub async fn send_request<M, P, R>(&self, method: M, params: P) -> Result<R>
@@ -161,7 +175,7 @@ where
 
 impl<S> LanguageServer for LsServer<S>
 where
-    S: Service<Request, Response = Option<Response>> + Sync + Send + 'static,
+    S: LsService,
     S::Error: Into<jsonrpc::Error>,
     S::Future: Send,
 {

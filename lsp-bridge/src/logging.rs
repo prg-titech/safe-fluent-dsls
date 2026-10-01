@@ -4,6 +4,7 @@ use futures::{FutureExt, future::BoxFuture};
 use log::{error, info};
 use serde::Serialize;
 use tower::{Layer, Service};
+use tower_lsp_server::jsonrpc::Response;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LogLayer {
@@ -48,6 +49,7 @@ impl<S> Layer<S> for LogLayer {
     }
 }
 
+#[derive(Clone)]
 pub struct LogService<S> {
     inner: S,
     layer: LogLayer,
@@ -56,12 +58,11 @@ pub struct LogService<S> {
 impl<S, Request> Service<Request> for LogService<S>
 where
     Request: Serialize,
-    S: Service<Request> + Send + Sync,
-    S::Response: Serialize + Send + 'static,
+    S: Service<Request, Response = Option<Response>> + Send + Sync,
     S::Error: Display + Send + 'static,
     S::Future: Send + 'static,
 {
-    type Response = S::Response;
+    type Response = Option<Response>;
     type Error = S::Error;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -79,9 +80,10 @@ where
             .call(req)
             .then(async move |r| {
                 match &r {
-                    Ok(r) => {
+                    Ok(Some(r)) => {
                         layer.log_serializable("Response", layer.reversed, r);
-                    }
+                    },
+                    Ok(None) => (),
                     Err(e) => {
                         error!("Error:    {e}")
                     }
