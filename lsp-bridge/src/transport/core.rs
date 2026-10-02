@@ -2,7 +2,7 @@ use futures::{
     FutureExt, Sink, SinkExt, Stream, StreamExt,
     future::{self, Join},
 };
-use std::{ops::{Deref, DerefMut}, pin::Pin};
+use std::pin::Pin;
 use tower::{Layer, Service, ServiceExt, util::BoxService};
 use tower_lsp_server::jsonrpc::{Request, Response};
 
@@ -171,22 +171,14 @@ impl<Service, Socket> LsHandle<Service, Socket> {
         }
     }
 
-    pub fn split(self) -> (Service, Socket) {
+    pub fn connect<S: LsService>(self, other_service: S) -> Schedulable<Service, Task<()>>
+    where
+        Socket: LsSocket,
+        S::Future: Send,
+        S::Error: Send,
+    {
         let Self { service, socket } = self;
-        (service, socket)
-    }
-}
-
-impl<Se, So> Deref for LsHandle<Se, So> {
-    type Target = Se;
-
-    fn deref(&self) -> &Self::Target {
-        &self.service
-    }
-}
-
-impl<Se, So> DerefMut for LsHandle<Se, So> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.service
+        let task = socket.connect(other_service);
+        task.map(|_| service)
     }
 }

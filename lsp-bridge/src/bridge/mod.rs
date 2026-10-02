@@ -1,7 +1,7 @@
 use crate::id_layer::map_id;
 use crate::logging::LogLayer;
 use crate::server::LsServer;
-use crate::transport::core::{BoxLsService, LsHandle, LsService, LsSocket, Schedulable, Task};
+use crate::transport::core::{BoxLsService, LsHandle, LsService, Schedulable, Task};
 use crate::transport::error::ExitedError;
 use crate::transport::{BaseLsSocket, Server};
 use dashmap::DashSet;
@@ -9,7 +9,6 @@ use futures::future::BoxFuture;
 use futures::{FutureExt, TryFutureExt};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use tower_lsp_server::ls_types::notification::Notification;
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -17,6 +16,7 @@ use std::task::Poll;
 use tokio::sync::OwnedRwLockWriteGuard;
 use tower::{Layer, Service, ServiceExt};
 use tower_lsp_server::jsonrpc::{self, Request, Response, Result as JrpcResult};
+use tower_lsp_server::ls_types::notification::Notification;
 use tower_lsp_server::{Client, ClientSocket, LanguageServer};
 use tower_lsp_server::{LspService, ls_types::*};
 
@@ -82,32 +82,26 @@ impl ServerBuilder {
                     h.boxed()
                 }
             })
-            .map(|handle| {
-                let (service, socket) = handle.split();
-                NamedServer::new(self.name, service, socket, self.client_log)
-            });
+            .map(|handle| NamedServer::new(self.name, handle, self.client_log));
         Ok(handle)
     }
 }
 
 pub struct NamedServer {
     name: &'static str,
-    service: BoxLsService<ExitedError>,
-    socket: BaseLsSocket,
+    handle: LsHandle<BoxLsService<ExitedError>, BaseLsSocket>,
     client_log: bool,
 }
 
 impl NamedServer {
     pub fn new(
         name: &'static str,
-        service: BoxLsService<ExitedError>,
-        socket: BaseLsSocket,
+        handle: LsHandle<BoxLsService<ExitedError>, BaseLsSocket>,
         client_log: bool,
     ) -> NamedServer {
         Self {
             name,
-            service,
-            socket,
+            handle,
             client_log,
         }
     }
@@ -118,8 +112,7 @@ impl NamedServer {
     ) -> Schedulable<BoxLsService<ExitedError>, Task<()>> {
         let Self {
             name,
-            service,
-            socket,
+            handle,
             client_log,
         } = self;
         let client = map_id(name).layer(client);
@@ -128,8 +121,7 @@ impl NamedServer {
         } else {
             client.boxed()
         };
-        let task = socket.connect(client).into_parts().1;
-        Schedulable::new(service, task)
+        handle.connect(client)
     }
 }
 
@@ -263,7 +255,7 @@ impl Notification for Status {
 #[derive(Default, Serialize, Deserialize)]
 pub struct StatusParams {
     message: String,
-    r#type: String
+    r#type: String,
 }
 
 impl<S> LanguageServer for BridgeInner<S>
@@ -274,7 +266,12 @@ where
 {
     async fn initialize(&self, params: InitializeParams) -> JrpcResult<InitializeResult> {
         let _ = self.embedded_server.initialize(params.clone()).await;
-        self.client.send_notification::<Status>(StatusParams { message: "Test...".to_owned(), ..Default::default()}).await;
+        self.client
+            .send_notification::<Status>(StatusParams {
+                message: "Test...".to_owned(),
+                ..Default::default()
+            })
+            .await;
         self.main_server.initialize(params).await
     }
 
