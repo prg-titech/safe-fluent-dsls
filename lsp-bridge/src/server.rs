@@ -15,7 +15,7 @@ use tower_lsp_server::{
 use crate::transport::core::LsService;
 
 #[derive(Debug, Clone, Default)]
-struct UniqueIdIter {
+pub struct UniqueIdIter {
     index: Arc<AtomicI64>,
     prefix: Option<&'static str>,
 }
@@ -31,7 +31,7 @@ impl UniqueIdIter {
     pub fn next(&self) -> Id {
         let current_index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if let Some(prefix) = self.prefix {
-            Id::String(format!("{prefix}{current_index}"))
+            Id::String(format!("{prefix}:{current_index}"))
         } else {
             Id::Number(current_index)
         }

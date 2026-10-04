@@ -1,9 +1,9 @@
-use std::{error::Error, fs::File};
+use std::{error::Error, fs::File, time::Duration};
 
-use crate::{bridge::BridgeBuilder, logging::LogLayer};
-use log::{LevelFilter, info};
+use crate::{bridge::core::simple::SimpleBridge, logging::LogLayer, transport::core::LsHandle};
+use futures::{FutureExt, select};
+use log::{LevelFilter, debug, info};
 use simplelog::{ConfigBuilder, WriteLogger};
-use tower::Layer;
 use tower_lsp_server::Server;
 
 pub mod bridge;
@@ -33,23 +33,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
 
     info!("Constructing bridge...");
-
-    let args: Vec<String> = std::env::args().collect();
-    let bridge_task = BridgeBuilder::default()
-        .main_server("jdtls", "jdtls", args.iter().skip(1))
-        .log_main_server()
-        .log_main_client()
-        .embedded_server("jsonls", "vscode-json-languageserver", &["--stdio"])
-        .log_embedded_server()
-        .log_embedded_client()
-        .build();
-    let (bridge, socket) = bridge_task.schedule();
-    let bridge = LogLayer::new("client", "bridge", false).layer(bridge);
+    let args = std::env::args().into_iter().skip(1);
+    let jdtls = LsHandle::from_server(transport::Server::spawn(
+        "jdtls",
+        args,
+    )?)
+    .schedule()
+    .layer(LogLayer::new("client", "jsonls", false));
+    let (bridge, socket) = SimpleBridge::new(move |client| SimpleBridge::connect(client, jdtls));
     info!("Bridge constructed");
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
-    Server::new(stdin, stdout, socket).serve(bridge).await;
+    let mut healthcheck = async {
+        let mut current_duration = Duration::from_millis(5);
+        let max_duration = Duration::from_secs(5);
+        loop {
+            tokio::time::sleep(current_duration).await;
+            debug!("Bridge is healthy");
+            current_duration = Duration::min(current_duration * 2, max_duration);
+        }
+    }
+    .boxed()
+    .fuse();
+    let mut serve = Server::new(stdin, stdout, socket)
+        .serve(bridge)
+        .boxed()
+        .fuse();
+    select! {
+        _ = healthcheck => (),
+        _ = serve => ()
+    };
 
     Ok(())
 }

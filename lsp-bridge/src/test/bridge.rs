@@ -2,18 +2,14 @@ use crate::{
     logging::{LogLayer, LogService},
     server::{LsLayer, LsServer},
     test::log::configure_logger,
-    transport::{
-        BaseLsService, Server,
-        core::{LsHandle, LsSocket},
-    },
+    transport::{BaseLsService, Server, core::LsHandle, error::ExitedError},
 };
-use futures::{SinkExt, StreamExt};
 use log::info;
 use rstest::{Context, fixture, rstest};
 use serde_json::json;
 use tower_lsp_server::{
     LanguageServer,
-    jsonrpc::Response,
+    jsonrpc::{Request, Response},
     ls_types::{InitializeParams, InitializedParams},
 };
 
@@ -26,21 +22,20 @@ async fn bridge() -> LsServer<LogService<BaseLsService>> {
     let handle = handle
         .layer(LogLayer::new("test", "client", false))
         .layer(LsLayer);
-    let (service, socket) = handle.split();
-    tokio::spawn(async move {
-        let (mut rx, mut tx) = socket.split();
-        while let Some(r) = rx.next().await {
-            info!("Got request: {}", serde_json::to_string(&r).unwrap());
-            if r.id().is_some() {
-                let dummy_response = Response::from_ok(r.id().cloned().unwrap(), json!({}));
-                info!(
-                    "Send dummy response: {}",
-                    serde_json::to_string(&dummy_response).unwrap()
-                );
-                let _ = tx.send(dummy_response).await;
-            }
+    let dummy_service = tower::service_fn(async |request: Request| {
+        info!("Got request: {}", serde_json::to_string(&request).unwrap());
+        if request.id().is_some() {
+            let dummy_response = Response::from_ok(request.id().cloned().unwrap(), json!({}));
+            info!(
+                "Send dummy response: {}",
+                serde_json::to_string(&dummy_response).unwrap()
+            );
+            Ok::<_, ExitedError>(Some(dummy_response))
+        } else {
+            Ok(None)
         }
     });
+    let service = handle.connect(dummy_service).schedule();
 
     service
 }
