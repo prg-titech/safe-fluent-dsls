@@ -82,7 +82,7 @@ where
                 match &r {
                     Ok(Some(r)) => {
                         layer.log_serializable("Response", layer.reversed, r);
-                    },
+                    }
                     Ok(None) => (),
                     Err(e) => {
                         error!("Error:    {e}")
@@ -91,5 +91,80 @@ where
                 r
             })
             .boxed()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::io::{BufRead, BufReader};
+
+    use rstest::{fixture, rstest};
+    use simplelog::{ConfigBuilder, WriteLogger};
+    use tower::{Layer, Service};
+
+    use crate::{logging::LogLayer, test::{DummyService, dummy_notification, dummy_request, dummy_service}};
+
+    #[fixture]
+    fn test_log() -> impl BufRead {
+        let (log_tx, log_rx) = std::io::pipe().unwrap();
+        WriteLogger::init(
+            log::LevelFilter::Trace,
+            ConfigBuilder::new().build(),
+            log_rx,
+        )
+        .unwrap();
+        BufReader::new(log_tx)
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_log_service(test_log: impl BufRead, mut dummy_service: DummyService) {
+        let mut full_log = test_log.lines();
+        let notification = dummy_notification();
+        assert_eq!(Ok(None), dummy_service.call(notification.clone()).await);
+
+        let mut log_service = LogLayer::new("client", "server", false).layer(dummy_service.clone());
+        assert_eq!(Ok(None), log_service.call(notification.clone()).await);
+        let line = full_log.next().unwrap().unwrap();
+        assert!(line.contains("INFO"));
+        assert!(line.contains("Request"));
+        assert!(line.contains("client --> server"));
+        assert!(line.contains(serde_json::to_string(&notification).unwrap().as_str()));
+
+        let request = dummy_request(1);
+        let response = log_service.call(request.clone()).await.unwrap().unwrap();
+        let request_line = full_log.next().unwrap().unwrap();
+        assert!(request_line.contains("INFO"));
+        assert!(request_line.contains("Request"));
+        assert!(request_line.contains("client --> server"));
+        assert!(request_line.contains(serde_json::to_string(&request).unwrap().as_str()));
+
+        let response_line = full_log.next().unwrap().unwrap();
+        assert!(response_line.contains("INFO"));
+        assert!(response_line.contains("Response"));
+        assert!(response_line.contains("client <-- server"));
+        assert!(response_line.contains(serde_json::to_string(&response).unwrap().as_str()));
+
+        let mut log_service = LogLayer::new("client", "server", true).layer(dummy_service.clone());
+        assert_eq!(Ok(None), log_service.call(notification.clone()).await);
+        let line = full_log.next().unwrap().unwrap();
+        assert!(line.contains("INFO"));
+        assert!(line.contains("Request"));
+        assert!(line.contains("client <-- server"));
+        assert!(line.contains(serde_json::to_string(&notification).unwrap().as_str()));
+
+        let request = dummy_request(1);
+        let response = log_service.call(request.clone()).await.unwrap().unwrap();
+        let request_line = full_log.next().unwrap().unwrap();
+        assert!(request_line.contains("INFO"));
+        assert!(request_line.contains("Request"));
+        assert!(request_line.contains("client <-- server"));
+        assert!(request_line.contains(serde_json::to_string(&request).unwrap().as_str()));
+
+        let response_line = full_log.next().unwrap().unwrap();
+        assert!(response_line.contains("INFO"));
+        assert!(response_line.contains("Response"));
+        assert!(response_line.contains("client --> server"));
+        assert!(response_line.contains(serde_json::to_string(&response).unwrap().as_str()));
     }
 }
