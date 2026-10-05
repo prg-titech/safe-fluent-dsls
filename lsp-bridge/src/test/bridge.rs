@@ -1,6 +1,8 @@
 use crate::{
-    logging::{LogLayer, LogService},
-    server::{LsLayer, LsServer},
+    layer::{
+        log::{LogLayer, LogService},
+        server::{LsLayer, LsServer},
+    },
     test::log::configure_logger,
     transport::{BaseLsService, Server, core::LsHandle, error::ExitedError},
 };
@@ -21,7 +23,7 @@ async fn bridge() -> LsServer<LogService<BaseLsService>> {
     tokio::spawn(task);
     let handle = handle
         .layer(LogLayer::new("test", "client", false))
-        .layer(LsLayer);
+        .layer(LsLayer::new("bridge"));
     let dummy_service = tower::service_fn(async |request: Request| {
         info!("Got request: {}", serde_json::to_string(&request).unwrap());
         if request.id().is_some() {

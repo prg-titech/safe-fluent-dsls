@@ -1,75 +1,48 @@
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     borrow::Cow,
-    sync::{Arc, atomic::AtomicI64},
     task::{Context, Poll},
 };
-use tokio::sync::{OwnedRwLockWriteGuard, RwLock};
-use tower::Layer;
+use tower::{Layer, Service};
 use tower_lsp_server::{
     LanguageServer,
-    jsonrpc::{self, Id, Request, Result},
+    jsonrpc::{self, Request, Response, Result},
     ls_types::*,
 };
 
-use crate::transport::core::LsService;
+use crate::layer::{
+    UniqueIdIter,
+    id_map::{MapIdLayer, MapIdService, map_id},
+};
 
-#[derive(Debug, Clone, Default)]
-pub struct UniqueIdIter {
-    index: Arc<AtomicI64>,
-    prefix: Option<&'static str>,
+#[derive(Clone)]
+pub struct LsLayer {
+    map_id_layer: MapIdLayer,
 }
 
-impl UniqueIdIter {
-    pub fn with_prefix(prefix: &'static str) -> Self {
+impl LsLayer {
+    pub fn new(prefix: &'static str) -> Self {
         Self {
-            prefix: Some(prefix),
-            ..Default::default()
-        }
-    }
-
-    pub fn next(&self) -> Id {
-        let current_index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if let Some(prefix) = self.prefix {
-            Id::String(format!("{prefix}:{current_index}"))
-        } else {
-            Id::Number(current_index)
+            map_id_layer: map_id(prefix),
         }
     }
 }
 
-impl Iterator for UniqueIdIter {
-    type Item = Id;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let current_index = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Some(if let Some(prefix) = self.prefix {
-            Id::String(format!("{prefix}{current_index}"))
-        } else {
-            Id::Number(current_index)
-        })
-    }
-}
-
-#[derive(Default, Clone, Copy)]
-#[allow(dead_code)]
-pub struct LsLayer;
-
-impl<S> Layer<S> for LsLayer {
+impl<S: Clone> Layer<S> for LsLayer {
     type Service = LsServer<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
-        LsServer::new(inner)
+        LsServer::new(inner, self.map_id_layer.prefix())
     }
 }
 
 #[derive(Debug)]
 pub struct LsServer<S> {
-    inner: Arc<RwLock<S>>,
+    inner: MapIdService<S>,
     id_iter: UniqueIdIter,
 }
 
-impl<S> Clone for LsServer<S> {
+impl<S: Clone> Clone for LsServer<S> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -78,35 +51,22 @@ impl<S> Clone for LsServer<S> {
     }
 }
 
-impl<S> LsServer<S> {
-    pub fn new(inner: S) -> Self {
+impl<S: Clone> LsServer<S> {
+    pub fn new(inner: S, prefix: &'static str) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(inner)),
-            id_iter: UniqueIdIter::with_prefix("bridge:"),
-        }
-    }
-
-    pub async fn get_inner_mut(&self) -> OwnedRwLockWriteGuard<S> {
-        self.inner.clone().write_owned().await
-    }
-
-    pub fn poll_write(&self, cx: &mut Context<'_>) -> Poll<OwnedRwLockWriteGuard<S>> {
-        match self.inner.clone().try_write_owned() {
-            Ok(g) => Poll::Ready(g),
-            Err(_) => {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
+            inner: map_id(prefix).layer(inner),
+            id_iter: UniqueIdIter::new(),
         }
     }
 }
 
 impl<S> LsServer<S>
 where
-    S: LsService,
+    S: Service<Request, Response = Option<Response>> + Clone,
     S::Error: Into<jsonrpc::Error>,
+    S::Future: Send + 'static,
 {
-    pub async fn send_request<M, P, R>(&self, method: M, params: P) -> Result<R>
+    pub async fn send_request<M, P, R>(&self, method: M, params: P) -> jsonrpc::Result<R>
     where
         M: Into<Cow<'static, str>>,
         P: Serialize,
@@ -114,11 +74,11 @@ where
     {
         let request = Request::build(method)
             .params(serde_json::to_value(params).unwrap())
-            .id(self.id_iter.next())
+            .id(self.id_iter.clone().next().unwrap())
             .finish();
         let result = self
-            .get_inner_mut()
-            .await
+            .inner
+            .clone()
             .call(request)
             .await
             .map_err(|e| e.into())?
@@ -133,18 +93,18 @@ where
         }
     }
 
-    pub async fn send_unit_request<M, P>(&self, method: M, params: P) -> Result<()>
+    pub async fn send_unit_request<M, P>(&self, method: M, params: P) -> jsonrpc::Result<()>
     where
         M: Into<Cow<'static, str>>,
         P: Serialize,
     {
         let request = Request::build(method)
             .params(serde_json::to_value(params).unwrap())
-            .id(self.id_iter.next())
+            .id(self.id_iter.clone().next().unwrap())
             .finish();
         let result = self
-            .get_inner_mut()
-            .await
+            .inner
+            .clone()
             .call(request)
             .await
             .map_err(|e| e.into())?
@@ -164,7 +124,7 @@ where
         let request = Request::build(method)
             .params(serde_json::to_value(params).unwrap())
             .finish();
-        let _ = self.get_inner_mut().await.call(request).await;
+        let _ = self.inner.clone().call(request).await;
     }
 
     #[allow(unused)]
@@ -173,11 +133,29 @@ where
     }
 }
 
+impl<S> Service<Request> for LsServer<S>
+where
+    S: Service<Request, Response = Option<Response>>,
+    S::Future: Send + 'static,
+{
+    type Response = Option<Response>;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<core::result::Result<(), Self::Error>> {
+        self.inner.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request) -> Self::Future {
+        self.inner.inner.call(req)
+    }
+}
+
 impl<S> LanguageServer for LsServer<S>
 where
-    S: LsService,
+    S: Service<Request, Response = Option<Response>> + Clone + Send + Sync + 'static,
     S::Error: Into<jsonrpc::Error>,
-    S::Future: Send,
+    S::Future: Send + 'static,
 {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         self.send_request("initialize", params).await

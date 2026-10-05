@@ -96,13 +96,13 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::io::{BufRead, BufReader};
+    use super::*;
 
+    use std::io::{BufRead, BufReader};
     use rstest::{fixture, rstest};
     use simplelog::{ConfigBuilder, WriteLogger};
     use tower::{Layer, Service};
-
-    use crate::{logging::LogLayer, test::{DummyService, dummy_notification, dummy_request, dummy_service}};
+    use crate::test::{DummyService, dummy_notification, dummy_request, dummy_service};
 
     #[fixture]
     fn test_log() -> impl BufRead {

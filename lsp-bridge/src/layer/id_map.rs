@@ -5,17 +5,22 @@ use futures::{FutureExt, future::BoxFuture};
 use tower::{Layer, Service};
 use tower_lsp_server::jsonrpc::{Id, Request, Response};
 
-use crate::transport::core::LsService;
-
 pub fn map_id(prefix: &'static str) -> MapIdLayer {
     MapIdLayer { prefix }
 }
 
+#[derive(Clone)]
 pub struct MapIdLayer {
     prefix: &'static str,
 }
 
-impl<S> Layer<S> for MapIdLayer {
+impl MapIdLayer {
+    pub fn prefix(&self) -> &'static str {
+        &self.prefix
+    }
+}
+
+impl<S: Clone> Layer<S> for MapIdLayer {
     type Service = MapIdService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
@@ -27,10 +32,11 @@ impl<S> Layer<S> for MapIdLayer {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct MapIdService<S> {
     prefix: &'static str,
     original_ids: Arc<DashMap<Box<str>, Id>>,
-    inner: S,
+    pub inner: S,
 }
 
 impl<S> MapIdService<S> {
@@ -77,8 +83,8 @@ impl<S> MapIdService<S> {
 
 impl<S> Service<Request> for MapIdService<S>
 where
-    S: LsService,
-    S::Future: Send,
+    S: Service<Request, Response=Option<Response>>,
+    S::Future: Send + 'static,
 {
     type Response = Option<Response>;
 
@@ -105,17 +111,13 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, sync::Arc};
-
+    use super::*;
+    use crate::test::{DummyService, dummy_request, dummy_service};
     use rstest::rstest;
     use serde_json::json;
+    use std::{collections::HashMap, sync::Arc};
     use tower::{Layer, Service};
     use tower_lsp_server::jsonrpc::{Id, Response};
-
-    use crate::{
-        id_layer::map_id,
-        test::{DummyService, dummy_request, dummy_service},
-    };
 
     #[rstest]
     #[tokio::test(flavor = "current_thread")]

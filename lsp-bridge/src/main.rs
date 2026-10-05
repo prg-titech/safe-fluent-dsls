@@ -1,6 +1,6 @@
 use std::{error::Error, fs::File, time::Duration};
 
-use crate::{bridge::core::simple::SimpleBridge, logging::LogLayer, transport::core::LsHandle};
+use crate::{bridge::core::simple::SimpleBridge, layer::log::LogLayer, transport::core::LsHandle};
 use futures::{FutureExt, select};
 use log::{LevelFilter, debug, info};
 use simplelog::{ConfigBuilder, WriteLogger};
@@ -8,9 +8,7 @@ use tower_lsp_server::Server;
 
 pub mod bridge;
 mod codec;
-mod id_layer;
-mod logging;
-mod server;
+pub mod layer;
 pub mod transport;
 
 #[cfg(test)]
@@ -34,12 +32,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Constructing bridge...");
     let args = std::env::args().into_iter().skip(1);
-    let jdtls = LsHandle::from_server(transport::Server::spawn(
-        "jdtls",
-        args,
-    )?)
-    .schedule()
-    .layer(LogLayer::new("client", "jsonls", false));
+    let jdtls = LsHandle::from_server(transport::Server::spawn("jdtls", args)?)
+        .schedule()
+        .layer(LogLayer::new("client", "jsonls", false));
     let (bridge, socket) = SimpleBridge::new(move |client| SimpleBridge::connect(client, jdtls));
     info!("Bridge constructed");
 

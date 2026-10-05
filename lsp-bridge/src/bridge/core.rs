@@ -16,7 +16,8 @@ use tower_lsp_server::{
 };
 
 use crate::{
-    server::UniqueIdIter, transport::{Pending, error::ExitedError},
+    layer::UniqueIdIter,
+    transport::{Pending, error::ExitedError},
 };
 
 struct DummyLanguageServer {}
@@ -53,11 +54,11 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new(tx: Sender<Request>, prefix: &'static str, pending: Pending) -> Server {
+    pub fn new(tx: Sender<Request>, pending: Pending) -> Server {
         Server {
             inner: Arc::new(ServerInner {
                 tx,
-                request_ids: UniqueIdIter::with_prefix(prefix),
+                request_ids: UniqueIdIter::new(),
                 pending,
             }),
         }
@@ -79,7 +80,7 @@ impl Server {
     where
         R: request::Request,
     {
-        let id = self.inner.request_ids.next();
+        let id = self.inner.request_ids.clone().next().unwrap();
         let request = Request::build(R::METHOD)
             .id(id)
             .params(serde_json::to_value(params).unwrap())
