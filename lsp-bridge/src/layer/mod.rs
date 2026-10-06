@@ -6,6 +6,7 @@ pub mod log;
 pub mod id_map;
 pub mod server;
 pub mod client;
+pub mod share_service;
 
 #[derive(Debug, Clone, Default)]
 pub struct UniqueIdIter {

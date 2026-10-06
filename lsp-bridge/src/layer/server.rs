@@ -1,9 +1,10 @@
+use log::error;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     borrow::Cow,
     task::{Context, Poll},
 };
-use tower::{Layer, Service};
+use tower::{Layer, Service, ServiceExt};
 use tower_lsp_server::{
     LanguageServer,
     jsonrpc::{self, Request, Response, Result},
@@ -79,6 +80,9 @@ where
         let result = self
             .inner
             .clone()
+            .ready_oneshot()
+            .await
+            .map_err(|e| e.into())?
             .call(request)
             .await
             .map_err(|e| e.into())?
@@ -105,6 +109,9 @@ where
         let result = self
             .inner
             .clone()
+            .ready_oneshot()
+            .await
+            .map_err(|e| e.into())?
             .call(request)
             .await
             .map_err(|e| e.into())?
@@ -124,6 +131,13 @@ where
         let request = Request::build(method)
             .params(serde_json::to_value(params).unwrap())
             .finish();
+        if let Err(e) = self.inner.clone().ready().await {
+            error!(
+                "Unable to send notification {request} due to error {}",
+                e.into()
+            );
+            return;
+        }
         let _ = self.inner.clone().call(request).await;
     }
 
