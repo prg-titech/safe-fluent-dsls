@@ -1,9 +1,6 @@
+use futures::TryFutureExt;
 use log::error;
-use serde::{Serialize, de::DeserializeOwned};
-use std::{
-    borrow::Cow,
-    task::{Context, Poll},
-};
+use std::task::{Context, Poll};
 use tower::{Layer, Service, ServiceExt};
 use tower_lsp_server::{
     LanguageServer,
@@ -13,6 +10,7 @@ use tower_lsp_server::{
 
 use crate::layer::{
     UniqueIdIter,
+    client::LanguageHandle,
     id_map::{MapIdLayer, MapIdService, map_id},
 };
 
@@ -61,89 +59,81 @@ impl<S: Clone> LsServer<S> {
     }
 }
 
-impl<S> LsServer<S>
+impl<S> LanguageHandle for LsServer<S>
 where
-    S: Service<Request, Response = Option<Response>> + Clone,
+    S: Service<Request, Response = Option<Response>> + Clone + Sync + Send,
     S::Error: Into<jsonrpc::Error>,
     S::Future: Send + 'static,
 {
-    pub async fn send_request<M, P, R>(&self, method: M, params: P) -> jsonrpc::Result<R>
+    async fn send_request<R>(&self, params: R::Params) -> jsonrpc::Result<R::Result>
     where
-        M: Into<Cow<'static, str>>,
-        P: Serialize,
-        R: DeserializeOwned + std::fmt::Debug,
+        R: request::Request,
     {
-        let request = Request::build(method)
-            .params(serde_json::to_value(params).unwrap())
+        let params = serde_json::to_value(params).map_err(|e| jsonrpc::Error {
+            code: jsonrpc::ErrorCode::ParseError,
+            message: e.to_string().into(),
+            data: None,
+        })?;
+
+        let request = Request::build(R::METHOD)
             .id(self.id_iter.clone().next().unwrap())
+            .params(params)
             .finish();
-        let result = self
-            .inner
-            .clone()
-            .ready_oneshot()
+
+        let mut inner = self.inner.clone();
+        let response = inner
+            .ready()
             .await
             .map_err(|e| e.into())?
             .call(request)
             .await
-            .map_err(|e| e.into())?
-            .unwrap();
-        let (_, response) = result.into_parts();
-        match response {
-            Ok(value) => {
-                let r: R = serde_json::from_value(value).unwrap();
-                Ok(r)
+            .map(|r| r.unwrap())
+            .map_err(|e| e.into())?;
+
+        let (_, result) = response.into_parts();
+        result.and_then(|v| {
+            serde_json::from_value(v).map_err(|e| jsonrpc::Error {
+                code: jsonrpc::ErrorCode::ParseError,
+                message: e.to_string().into(),
+                data: None,
+            })
+        })
+    }
+
+    async fn send_notification<N>(&self, params: N::Params)
+    where
+        N: notification::Notification,
+    {
+        let params = match serde_json::to_value(params) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Unable to serialize parameters with error: {e}");
+                return;
             }
-            Err(e) => Err(e),
-        }
-    }
+        };
 
-    pub async fn send_unit_request<M, P>(&self, method: M, params: P) -> jsonrpc::Result<()>
-    where
-        M: Into<Cow<'static, str>>,
-        P: Serialize,
-    {
-        let request = Request::build(method)
-            .params(serde_json::to_value(params).unwrap())
-            .id(self.id_iter.clone().next().unwrap())
-            .finish();
-        let result = self
-            .inner
+        let request = Request::build(N::METHOD).params(params).finish();
+        if self
             .clone()
-            .ready_oneshot()
+            .ready()
+            .and_then(|s| s.call(request))
             .await
-            .map_err(|e| e.into())?
-            .call(request)
-            .await
-            .map_err(|e| e.into())?
-            .unwrap();
-        let (_, response) = result.into_parts();
-        match response {
-            Ok(_) => Ok(()),
-            Err(e) => Err(e),
+            .is_err()
+        {
+            error!("failed to send notification");
         }
     }
+}
 
-    pub async fn send_notification<M, P>(&self, method: M, params: P)
-    where
-        M: Into<Cow<'static, str>>,
-        P: Serialize,
-    {
-        let request = Request::build(method)
-            .params(serde_json::to_value(params).unwrap())
-            .finish();
-        if let Err(e) = self.inner.clone().ready().await {
-            error!(
-                "Unable to send notification {request} due to error {}",
-                e.into()
-            );
-            return;
-        }
-        let _ = self.inner.clone().call(request).await;
-    }
-
+impl<S> LsServer<S>
+where
+    S: Service<Request, Response = Option<Response>> + Clone + Sync + Send,
+    S::Error: Into<jsonrpc::Error>,
+    S::Future: Send + 'static,
+{
     #[allow(unused)]
     pub async fn exit(&self) {
-        self.send_notification("exit", ()).await
+        self.send_notification::<notification::Exit>(()).await
     }
 }
 
@@ -172,28 +162,30 @@ where
     S::Future: Send + 'static,
 {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        self.send_request("initialize", params).await
+        self.send_request::<request::Initialize>(params).await
     }
 
     async fn initialized(&self, params: InitializedParams) {
-        self.send_notification("initialized", params).await
+        self.send_notification::<notification::Initialized>(params)
+            .await
     }
 
     async fn shutdown(&self) -> Result<()> {
-        self.send_unit_request("shutdown", ()).await
+        self.send_request::<request::Shutdown>(()).await
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.send_notification("textDocument/didOpen", params).await
+        self.send_notification::<notification::DidOpenTextDocument>(params)
+            .await
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        self.send_notification("textDocument/didChange", params)
+        self.send_notification::<notification::DidChangeTextDocument>(params)
             .await
     }
 
     async fn will_save(&self, params: WillSaveTextDocumentParams) {
-        self.send_notification("textDocument/willSave", params)
+        self.send_notification::<notification::WillSaveTextDocument>(params)
             .await
     }
 
@@ -201,36 +193,37 @@ where
         &self,
         params: WillSaveTextDocumentParams,
     ) -> Result<Option<Vec<TextEdit>>> {
-        self.send_request("textDocument/willSaveWaitUntil", params)
+        self.send_request::<request::WillSaveWaitUntil>(params)
             .await
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
-        self.send_notification("textDocument/didSave", params).await
+        self.send_notification::<notification::DidSaveTextDocument>(params)
+            .await
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        self.send_notification("textDocument/didClose", params)
+        self.send_notification::<notification::DidCloseTextDocument>(params)
             .await
     }
 
     async fn notebook_did_open(&self, params: DidOpenNotebookDocumentParams) {
-        self.send_notification("notebookDocument/didOpen", params)
+        self.send_notification::<notification::DidOpenNotebookDocument>(params)
             .await
     }
 
     async fn notebook_did_change(&self, params: DidChangeNotebookDocumentParams) {
-        self.send_notification("notebookDocument/didChange", params)
+        self.send_notification::<notification::DidChangeNotebookDocument>(params)
             .await
     }
 
     async fn notebook_did_save(&self, params: DidSaveNotebookDocumentParams) {
-        self.send_notification("notebookDocument/didSave", params)
+        self.send_notification::<notification::DidSaveNotebookDocument>(params)
             .await
     }
 
     async fn notebook_did_close(&self, params: DidCloseNotebookDocumentParams) {
-        self.send_notification("notebookDocument/didClose", params)
+        self.send_notification::<notification::DidCloseNotebookDocument>(params)
             .await
     }
 
@@ -238,21 +231,21 @@ where
         &self,
         params: request::GotoDeclarationParams,
     ) -> Result<Option<request::GotoDeclarationResponse>> {
-        self.send_request("textDocument/declaration", params).await
+        self.send_request::<request::GotoDeclaration>(params).await
     }
 
     async fn goto_definition(
         &self,
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
-        self.send_request("textDocument/definition", params).await
+        self.send_request::<request::GotoDefinition>(params).await
     }
 
     async fn goto_type_definition(
         &self,
         params: request::GotoTypeDefinitionParams,
     ) -> Result<Option<request::GotoTypeDefinitionResponse>> {
-        self.send_request("textDocument/typeDefinition", params)
+        self.send_request::<request::GotoTypeDefinition>(params)
             .await
     }
 
@@ -260,19 +253,19 @@ where
         &self,
         params: request::GotoImplementationParams,
     ) -> Result<Option<request::GotoImplementationResponse>> {
-        self.send_request("textDocument/implementation", params)
+        self.send_request::<request::GotoImplementation>(params)
             .await
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
-        self.send_request("textDocument/references", params).await
+        self.send_request::<request::References>(params).await
     }
 
     async fn prepare_call_hierarchy(
         &self,
         params: CallHierarchyPrepareParams,
     ) -> Result<Option<Vec<CallHierarchyItem>>> {
-        self.send_request("textDocument/prepareCallHierarchy", params)
+        self.send_request::<request::CallHierarchyPrepare>(params)
             .await
     }
 
@@ -280,7 +273,7 @@ where
         &self,
         params: CallHierarchyIncomingCallsParams,
     ) -> Result<Option<Vec<CallHierarchyIncomingCall>>> {
-        self.send_request("callHierarchy/incomingCalls", params)
+        self.send_request::<request::CallHierarchyIncomingCalls>(params)
             .await
     }
 
@@ -288,7 +281,7 @@ where
         &self,
         params: CallHierarchyOutgoingCallsParams,
     ) -> Result<Option<Vec<CallHierarchyOutgoingCall>>> {
-        self.send_request("callHierarchy/outgoingCalls", params)
+        self.send_request::<request::CallHierarchyOutgoingCalls>(params)
             .await
     }
 
@@ -296,7 +289,7 @@ where
         &self,
         params: TypeHierarchyPrepareParams,
     ) -> Result<Option<Vec<TypeHierarchyItem>>> {
-        self.send_request("textDocument/prepareTypeHierarchy", params)
+        self.send_request::<request::TypeHierarchyPrepare>(params)
             .await
     }
 
@@ -304,53 +297,58 @@ where
         &self,
         params: TypeHierarchySupertypesParams,
     ) -> Result<Option<Vec<TypeHierarchyItem>>> {
-        self.send_request("typeHierarchy/supertypes", params).await
+        self.send_request::<request::TypeHierarchySupertypes>(params)
+            .await
     }
 
     async fn subtypes(
         &self,
         params: TypeHierarchySubtypesParams,
     ) -> Result<Option<Vec<TypeHierarchyItem>>> {
-        self.send_request("typeHierarchy/subtypes", params).await
+        self.send_request::<request::TypeHierarchySubtypes>(params)
+            .await
     }
 
     async fn document_highlight(
         &self,
         params: DocumentHighlightParams,
     ) -> Result<Option<Vec<DocumentHighlight>>> {
-        self.send_request("textDocument/documentHighlight", params)
+        self.send_request::<request::DocumentHighlightRequest>(params)
             .await
     }
 
     async fn document_link(&self, params: DocumentLinkParams) -> Result<Option<Vec<DocumentLink>>> {
-        self.send_request("textDocument/documentLink", params).await
+        self.send_request::<request::DocumentLinkRequest>(params)
+            .await
     }
 
     async fn document_link_resolve(&self, params: DocumentLink) -> Result<DocumentLink> {
-        self.send_request("documentLink/resolve", params).await
+        self.send_request::<request::DocumentLinkResolve>(params)
+            .await
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
-        self.send_request("textDocument/hover", params).await
+        self.send_request::<request::HoverRequest>(params).await
     }
 
     async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {
-        self.send_request("textDocument/codeLens", params).await
+        self.send_request::<request::CodeLensRequest>(params).await
     }
 
     async fn code_lens_resolve(&self, params: CodeLens) -> Result<CodeLens> {
-        self.send_request("codeLens/resolve", params).await
+        self.send_request::<request::CodeLensResolve>(params).await
     }
 
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
-        self.send_request("textDocument/foldingRange", params).await
+        self.send_request::<request::FoldingRangeRequest>(params)
+            .await
     }
 
     async fn selection_range(
         &self,
         params: SelectionRangeParams,
     ) -> Result<Option<Vec<SelectionRange>>> {
-        self.send_request("textDocument/selectionRange", params)
+        self.send_request::<request::SelectionRangeRequest>(params)
             .await
     }
 
@@ -358,7 +356,7 @@ where
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
-        self.send_request("textDocument/documentSymbol", params)
+        self.send_request::<request::DocumentSymbolRequest>(params)
             .await
     }
 
@@ -366,7 +364,7 @@ where
         &self,
         params: SemanticTokensParams,
     ) -> Result<Option<SemanticTokensResult>> {
-        self.send_request("textDocument/semanticTokens/full", params)
+        self.send_request::<request::SemanticTokensFullRequest>(params)
             .await
     }
 
@@ -374,7 +372,7 @@ where
         &self,
         params: SemanticTokensDeltaParams,
     ) -> Result<Option<SemanticTokensFullDeltaResult>> {
-        self.send_request("textDocument/semanticTokens/full/delta", params)
+        self.send_request::<request::SemanticTokensFullDeltaRequest>(params)
             .await
     }
 
@@ -382,103 +380,107 @@ where
         &self,
         params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
-        self.send_request("textDocument/semanticTokens/range", params)
+        self.send_request::<request::SemanticTokensRangeRequest>(params)
             .await
     }
 
     async fn inline_value(&self, params: InlineValueParams) -> Result<Option<Vec<InlineValue>>> {
-        self.send_request("textDocument/inlineValue", params).await
+        self.send_request::<request::InlineValueRequest>(params)
+            .await
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
-        self.send_request("textDocument/inlayHint", params).await
+        self.send_request::<request::InlayHintRequest>(params).await
     }
 
     async fn inlay_hint_resolve(&self, params: InlayHint) -> Result<InlayHint> {
-        self.send_request("inlayHint/resolve", params).await
+        self.send_request::<request::InlayHintResolveRequest>(params)
+            .await
     }
 
     async fn moniker(&self, params: MonikerParams) -> Result<Option<Vec<Moniker>>> {
-        self.send_request("textDocument/moniker", params).await
+        self.send_request::<request::MonikerRequest>(params).await
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        self.send_request("textDocument/completion", params).await
+        self.send_request::<request::Completion>(params).await
     }
 
     async fn completion_resolve(&self, params: CompletionItem) -> Result<CompletionItem> {
-        self.send_request("completionItem/resolve", params).await
+        self.send_request::<request::ResolveCompletionItem>(params)
+            .await
     }
 
     async fn diagnostic(
         &self,
         params: DocumentDiagnosticParams,
     ) -> Result<DocumentDiagnosticReportResult> {
-        self.send_request("textDocument/diagnostic", params).await
+        self.send_request::<request::DocumentDiagnosticRequest>(params)
+            .await
     }
 
     async fn workspace_diagnostic(
         &self,
         params: WorkspaceDiagnosticParams,
     ) -> Result<WorkspaceDiagnosticReportResult> {
-        self.send_request("workspace/diagnostic", params).await
+        self.send_request::<request::WorkspaceDiagnosticRequest>(params)
+            .await
     }
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
-        self.send_request("textDocument/signatureHelp", params)
+        self.send_request::<request::SignatureHelpRequest>(params)
             .await
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
-        self.send_request("textDocument/codeAction", params).await
+        self.send_request::<request::CodeActionRequest>(params)
+            .await
     }
 
     async fn code_action_resolve(&self, params: CodeAction) -> Result<CodeAction> {
-        self.send_request("codeAction/resolve", params).await
+        self.send_request::<request::CodeActionResolveRequest>(params)
+            .await
     }
 
     async fn document_color(&self, params: DocumentColorParams) -> Result<Vec<ColorInformation>> {
-        self.send_request("textDocument/documentColor", params)
-            .await
+        self.send_request::<request::DocumentColor>(params).await
     }
 
     async fn color_presentation(
         &self,
         params: ColorPresentationParams,
     ) -> Result<Vec<ColorPresentation>> {
-        self.send_request("textDocument/colorPresentation", params)
+        self.send_request::<request::ColorPresentationRequest>(params)
             .await
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
-        self.send_request("textDocument/formatting", params).await
+        self.send_request::<request::Formatting>(params).await
     }
 
     async fn range_formatting(
         &self,
         params: DocumentRangeFormattingParams,
     ) -> Result<Option<Vec<TextEdit>>> {
-        self.send_request("textDocument/rangeFormatting", params)
-            .await
+        self.send_request::<request::RangeFormatting>(params).await
     }
 
     async fn on_type_formatting(
         &self,
         params: DocumentOnTypeFormattingParams,
     ) -> Result<Option<Vec<TextEdit>>> {
-        self.send_request("textDocument/onTypeFormatting", params)
-            .await
+        self.send_request::<request::OnTypeFormatting>(params).await
     }
 
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
-        self.send_request("textDocument/rename", params).await
+        self.send_request::<request::Rename>(params).await
     }
 
     async fn prepare_rename(
         &self,
         params: TextDocumentPositionParams,
     ) -> Result<Option<PrepareRenameResponse>> {
-        self.send_request("textDocument/prepareRename", params)
+        self.send_request::<request::PrepareRenameRequest>(params)
             .await
     }
 
@@ -486,7 +488,7 @@ where
         &self,
         params: LinkedEditingRangeParams,
     ) -> Result<Option<LinkedEditingRanges>> {
-        self.send_request("textDocument/linkedEditingRange", params)
+        self.send_request::<request::LinkedEditingRange>(params)
             .await
     }
 
@@ -494,56 +496,58 @@ where
         &self,
         params: WorkspaceSymbolParams,
     ) -> Result<Option<WorkspaceSymbolResponse>> {
-        self.send_request("workspace/symbol", params).await
+        self.send_request::<request::WorkspaceSymbolRequest>(params)
+            .await
     }
 
     async fn symbol_resolve(&self, params: WorkspaceSymbol) -> Result<WorkspaceSymbol> {
-        self.send_request("workspaceSymbol/resolve", params).await
+        self.send_request::<request::WorkspaceSymbolResolve>(params)
+            .await
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
-        self.send_notification("workspace/didChangeConfiguration", params)
+        self.send_notification::<notification::DidChangeConfiguration>(params)
             .await
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
-        self.send_notification("workspace/didChangeWorkspaceFolders", params)
+        self.send_notification::<notification::DidChangeWorkspaceFolders>(params)
             .await
     }
 
     async fn will_create_files(&self, params: CreateFilesParams) -> Result<Option<WorkspaceEdit>> {
-        self.send_request("workspace/willCreateFiles", params).await
+        self.send_request::<request::WillCreateFiles>(params).await
     }
 
     async fn did_create_files(&self, params: CreateFilesParams) {
-        self.send_notification("workspace/didCreateFiles", params)
+        self.send_notification::<notification::DidCreateFiles>(params)
             .await
     }
 
     async fn will_rename_files(&self, params: RenameFilesParams) -> Result<Option<WorkspaceEdit>> {
-        self.send_request("workspace/willRenameFiles", params).await
+        self.send_request::<request::WillRenameFiles>(params).await
     }
 
     async fn did_rename_files(&self, params: RenameFilesParams) {
-        self.send_notification("workspace/didRenameFiles", params)
+        self.send_notification::<notification::DidRenameFiles>(params)
             .await
     }
 
     async fn will_delete_files(&self, params: DeleteFilesParams) -> Result<Option<WorkspaceEdit>> {
-        self.send_request("workspace/willDeleteFiles", params).await
+        self.send_request::<request::WillDeleteFiles>(params).await
     }
 
     async fn did_delete_files(&self, params: DeleteFilesParams) {
-        self.send_notification("workspace/didDeleteFiles", params)
+        self.send_notification::<notification::DidDeleteFiles>(params)
             .await
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
-        self.send_notification("workspace/didChangeWatchedFiles", params)
+        self.send_notification::<notification::DidChangeWatchedFiles>(params)
             .await
     }
 
     async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<LSPAny>> {
-        self.send_request("workspace/executeCommand", params).await
+        self.send_request::<request::ExecuteCommand>(params).await
     }
 }
