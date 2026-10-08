@@ -1,8 +1,7 @@
 use crate::{
-    bridge::core::create_client,
-    transport::core::{LsHandle, LsService, LsSocket},
+    bridge::core::create_client, layer::log::LogLayer, transport::core::{LsHandle, LsService, LsSocket},
 };
-use tower::Service;
+use tower::{Layer, Service};
 use tower_lsp_server::{
     Client, ClientSocket,
     jsonrpc::{Request, Response},
@@ -42,6 +41,18 @@ impl<S> SimpleBridge<S> {
         So: LsSocket,
     {
         let service = handle.connect(client.clone()).schedule();
+        Self {
+            inner: Bridge::build(client).add_server("main", service),
+        }
+    }
+
+    pub fn connect_with_log<So>(client: Client, handle: LsHandle<S, So>, target_name: &'static str) -> Self
+    where
+        So: LsSocket,
+    {
+        let log_layer = LogLayer::new("client", target_name, true);
+        let client_log = log_layer.layer(client.clone());
+        let service = handle.connect(client_log).schedule();
         Self {
             inner: Bridge::build(client).add_server("main", service),
         }

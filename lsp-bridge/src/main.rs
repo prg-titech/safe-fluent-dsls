@@ -31,16 +31,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
 
     info!("Constructing bridge...");
-    let args = std::env::args().into_iter().skip(1);
-    let jdtls = LsHandle::from_server(transport::Server::spawn("jdtls", args)?)
-        .schedule()
-        .layer(LogLayer::new("client", "jsonls", false));
-    let (bridge, socket) = SimpleBridge::new(move |client| SimpleBridge::connect(client, jdtls));
+
+    let jdtls = LsHandle::from_server(transport::Server::spawn(
+        "jdtls",
+        [
+            "-configuration",
+            "/home/dennis/.cache/jdtls/config",
+            "-data",
+            "/home/dennis/.cache/jdtls/workspace/1234abcd9876fedc",
+        ],
+    )?)
+    .schedule()
+    .layer(LogLayer::new("client", "jdtls", false));
+    let (bridge, socket) =
+        SimpleBridge::new(move |client| SimpleBridge::connect_with_log(client, jdtls, "jdtls"));
     info!("Bridge constructed");
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
-    let mut healthcheck = async {
+    /*let mut healthcheck = async {
         let mut current_duration = Duration::from_millis(5);
         let max_duration = Duration::from_secs(5);
         loop {
@@ -50,13 +59,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     .boxed()
-    .fuse();
+    .fuse();*/
     let mut serve = Server::new(stdin, stdout, socket)
         .serve(bridge)
         .boxed()
         .fuse();
     select! {
-        _ = healthcheck => (),
+        // _ = healthcheck => (),
         _ = serve => ()
     };
 

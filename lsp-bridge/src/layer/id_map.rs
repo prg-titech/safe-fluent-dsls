@@ -20,7 +20,7 @@ impl MapIdLayer {
     }
 }
 
-impl<S: Clone> Layer<S> for MapIdLayer {
+impl<S> Layer<S> for MapIdLayer {
     type Service = MapIdService<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
@@ -83,7 +83,7 @@ impl<S> MapIdService<S> {
 
 impl<S> Service<Request> for MapIdService<S>
 where
-    S: Service<Request, Response=Option<Response>>,
+    S: Service<Request, Response = Option<Response>>,
     S::Future: Send + 'static,
 {
     type Response = Option<Response>;
@@ -164,8 +164,9 @@ mod test {
         .collect();
         assert_eq!(
             expected_ids,
-            Arc::unwrap_or_clone(dummy_service.encountered_ids)
+            Arc::unwrap_or_clone(dummy_service.encountered_requests)
                 .into_iter()
+                .map(|(k, v)| (k, v.len()))
                 .collect()
         );
     }

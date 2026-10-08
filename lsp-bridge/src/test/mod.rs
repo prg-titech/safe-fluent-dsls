@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 use futures::future::{self, Ready};
+use ::log::info;
 use rstest::fixture;
 use serde_json::json;
 use tower::Service;
@@ -14,7 +15,7 @@ pub mod log;
 
 #[derive(Default, Clone)]
 pub struct DummyService {
-    pub encountered_ids: Arc<DashMap<Option<Id>, usize>>,
+    pub encountered_requests: Arc<DashMap<Option<Id>, Vec<Request>>>,
 }
 
 impl Service<Request> for DummyService {
@@ -30,21 +31,22 @@ impl Service<Request> for DummyService {
     }
 
     fn call(&mut self, req: Request) -> Self::Future {
+        info!("Got request: {}", serde_json::to_string(&req).unwrap());
         if let Some(id) = req.id().cloned() {
-            self.encountered_ids
+            self.encountered_requests
                 .entry(Some(id.clone()))
                 .and_modify(|u| {
-                    *u += 1;
+                    u.push(req.clone())
                 })
-                .or_insert(1);
+                .or_insert(vec![req]);
             future::ready(Ok(Some(Response::from_ok(id.clone(), json!({"id": id})))))
         } else {
-            self.encountered_ids
+            self.encountered_requests
                 .entry(None)
                 .and_modify(|u| {
-                    *u += 1;
+                    u.push(req.clone())
                 })
-                .or_insert(1);
+                .or_insert(vec![req]);
             future::ready(Ok(None))
         }
     }

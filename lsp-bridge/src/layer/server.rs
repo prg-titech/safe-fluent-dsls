@@ -1,5 +1,6 @@
 use futures::TryFutureExt;
 use log::error;
+use serde_json::json;
 use std::task::{Context, Poll};
 use tower::{Layer, Service, ServiceExt};
 use tower_lsp_server::{
@@ -27,7 +28,7 @@ impl LsLayer {
     }
 }
 
-impl<S: Clone> Layer<S> for LsLayer {
+impl<S> Layer<S> for LsLayer {
     type Service = LsServer<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
@@ -50,7 +51,7 @@ impl<S: Clone> Clone for LsServer<S> {
     }
 }
 
-impl<S: Clone> LsServer<S> {
+impl<S> LsServer<S> {
     pub fn new(inner: S, prefix: &'static str) -> Self {
         Self {
             inner: map_id(prefix).layer(inner),
@@ -91,12 +92,19 @@ where
             .map_err(|e| e.into())?;
 
         let (_, result) = response.into_parts();
-        result.and_then(|v| {
-            serde_json::from_value(v).map_err(|e| jsonrpc::Error {
-                code: jsonrpc::ErrorCode::ParseError,
-                message: e.to_string().into(),
-                data: None,
-            })
+        result.and_then(|v| match serde_json::from_value(v) {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                if e.to_string().contains("expected unit") {
+                    Ok(serde_json::from_value(json!(null)).unwrap())
+                } else {
+                    Err(jsonrpc::Error {
+                        code: jsonrpc::ErrorCode::ParseError,
+                        message: e.to_string().into(),
+                        data: None,
+                    })
+                }
+            }
         })
     }
 
