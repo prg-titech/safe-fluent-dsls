@@ -1,12 +1,13 @@
-#![allow(async_fn_in_trait)]
-
-use std::fmt::Display;
+use std::{fmt::Display, future};
 
 use log::error;
 use serde::Serialize;
-use tower_lsp_server::{jsonrpc, ls_types::*};
+use tower_lsp_server::{
+    jsonrpc::{self, Error},
+    ls_types::*,
+};
 
-pub trait LanguageHandle {
+pub trait LanguageHandle: Send + Sync + 'static {
     fn send_request<R>(
         &self,
         params: R::Params,
@@ -19,126 +20,144 @@ pub trait LanguageHandle {
         N: notification::Notification;
 }
 
-pub trait LanguageClient: LanguageHandle {
-    async fn register_capability(&self, registrations: Vec<Registration>) -> jsonrpc::Result<()> {
-        self.send_request::<request::RegisterCapability>(RegistrationParams { registrations })
-            .await
+pub trait LanguageClient: Send + Sync + 'static {
+    fn register_capability(
+        &self,
+        registrations: Vec<Registration>,
+    ) -> impl Future<Output = jsonrpc::Result<()>> + Send {
+        let _ = registrations;
+        error!("Client does not implement method client/registerCapability");
+        future::ready(Err(Error::method_not_found()))
     }
 
-    async fn unregister_capability(
+    fn unregister_capability(
         &self,
         unregisterations: Vec<Unregistration>,
-    ) -> jsonrpc::Result<()> {
-        self.send_request::<request::UnregisterCapability>(UnregistrationParams {
-            unregisterations,
-        })
-        .await
+    ) -> impl Future<Output = jsonrpc::Result<()>> + Send {
+        let _ = unregisterations;
+        error!("Client does not implement method client/unregisterCapability");
+        future::ready(Err(Error::method_not_found()))
     }
 
-    async fn show_message<M: Display>(&self, typ: MessageType, message: M) {
-        self.send_notification::<notification::ShowMessage>(ShowMessageParams {
-            typ,
-            message: message.to_string(),
-        })
-        .await;
+    fn show_message<M: Display + Send>(
+        &self,
+        typ: MessageType,
+        message: M,
+    ) -> impl Future<Output = ()> + Send {
+        let _ = typ;
+        let _ = message;
+        error!("Client does not implement method window/showMessage");
+        future::ready(())
     }
 
-    async fn show_message_request<M: Display>(
+    fn show_message_request<M: Display + Send>(
         &self,
         typ: MessageType,
         message: M,
         actions: Option<Vec<MessageActionItem>>,
-    ) -> jsonrpc::Result<Option<MessageActionItem>> {
-        self.send_request::<request::ShowMessageRequest>(ShowMessageRequestParams {
-            typ,
-            message: message.to_string(),
-            actions,
-        })
-        .await
+    ) -> impl Future<Output = jsonrpc::Result<Option<MessageActionItem>>> + Send {
+        let _ = typ;
+        let _ = message;
+        let _ = actions;
+        error!("Client does not implement method window/showMessageRequest");
+        future::ready(Err(Error::method_not_found()))
     }
 
-    async fn log_message<M: Display>(&self, typ: MessageType, message: M) {
-        self.send_notification::<notification::LogMessage>(LogMessageParams {
-            typ,
-            message: message.to_string(),
-        })
-        .await;
+    fn log_message<M: Display + Send>(
+        &self,
+        typ: MessageType,
+        message: M,
+    ) -> impl Future<Output = ()> + Send {
+        let _ = typ;
+        let _ = message;
+        error!("Client does not implement method window/logMessage");
+        future::ready(())
     }
 
-    async fn show_document(&self, params: ShowDocumentParams) -> jsonrpc::Result<bool> {
-        self.send_request::<request::ShowDocument>(params)
-            .await
-            .map(|res| res.success)
+    fn show_document(
+        &self,
+        params: ShowDocumentParams,
+    ) -> impl Future<Output = jsonrpc::Result<bool>> + Send {
+        let _ = params;
+        error!("Client does not implement method window/showDocument");
+        future::ready(Err(Error::method_not_found()))
     }
 
-    async fn telemetry_event<S: Serialize>(&self, data: S) {
-        match serde_json::to_value(data) {
-            Err(e) => error!("invalid JSON in `telemetry/event` notification: {}", e),
-            Ok(value) => {
-                let value = match value {
-                    LSPAny::Object(value) => OneOf::Left(value),
-                    LSPAny::Array(value) => OneOf::Right(value),
-                    value => OneOf::Right(vec![value]),
-                };
-                self.send_notification::<notification::TelemetryEvent>(value)
-                    .await;
-            }
-        }
+    fn telemetry_event<S: Serialize + Send>(&self, data: S) -> impl Future<Output = ()> + Send {
+        let _ = data;
+        error!("Client does not implement method telemetry/event");
+        future::ready(())
     }
 
-    async fn code_lens_refresh(&self) -> jsonrpc::Result<()> {
-        self.send_request::<request::CodeLensRefresh>(()).await
+    fn code_lens_refresh(&self) -> impl Future<Output = jsonrpc::Result<()>> + Send {
+        error!("Client does not implement method workspace/codeLens/refresh");
+        future::ready(Err(Error::method_not_found()))
     }
 
-    async fn semantic_tokens_refresh(&self) -> jsonrpc::Result<()> {
-        self.send_request::<request::SemanticTokensRefresh>(())
-            .await
+    fn semantic_tokens_refresh(&self) -> impl Future<Output = jsonrpc::Result<()>> + Send {
+        error!("Client does not implement method workspace/semanticTokens/refresh");
+        future::ready(Err(Error::method_not_found()))
     }
 
-    async fn inline_value_refresh(&self) -> jsonrpc::Result<()> {
-        self.send_request::<request::InlineValueRefreshRequest>(())
-            .await
+    fn inline_value_refresh(&self) -> impl Future<Output = jsonrpc::Result<()>> + Send {
+        error!("Client does not implement method workspace/inlineValue/refresh");
+        future::ready(Err(Error::method_not_found()))
     }
 
-    async fn inlay_hint_refresh(&self) -> jsonrpc::Result<()> {
-        self.send_request::<request::InlayHintRefreshRequest>(())
-            .await
+    fn inlay_hint_refresh(&self) -> impl Future<Output = jsonrpc::Result<()>> + Send {
+        error!("Client does not implement method workspace/inlayHint/refresh");
+        future::ready(Err(Error::method_not_found()))
     }
 
-    async fn workspace_diagnostic_refresh(&self) -> jsonrpc::Result<()> {
-        self.send_request::<request::WorkspaceDiagnosticRefresh>(())
-            .await
+    fn workspace_diagnostic_refresh(&self) -> impl Future<Output = jsonrpc::Result<()>> + Send {
+        error!("Client does not implement method workspace/diagnostic/refresh");
+        future::ready(Err(Error::method_not_found()))
     }
 
-    async fn publish_diagnostics(&self, uri: Uri, diags: Vec<Diagnostic>, version: Option<i32>) {
-        self.send_notification::<notification::PublishDiagnostics>(PublishDiagnosticsParams::new(
-            uri, diags, version,
-        ))
-        .await;
+    fn publish_diagnostics(
+        &self,
+        uri: Uri,
+        diags: Vec<Diagnostic>,
+        version: Option<i32>,
+    ) -> impl Future<Output = ()> + Send {
+        let _ = uri;
+        let _ = diags;
+        let _ = version;
+        error!("Client does not implement method textDocument/publishDiagnostics");
+        future::ready(())
     }
 
-    async fn create_work_done_progress(&self, token: ProgressToken) -> jsonrpc::Result<()> {
-        self.send_request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams { token })
-            .await
+    fn create_work_done_progress(
+        &self,
+        token: ProgressToken,
+    ) -> impl Future<Output = jsonrpc::Result<()>> + Send {
+        let _ = token;
+        error!("Client does not implement method window/workDoneProgress/create");
+        future::ready(Err(Error::method_not_found()))
     }
 
-    async fn configuration(&self, items: Vec<ConfigurationItem>) -> jsonrpc::Result<Vec<LSPAny>> {
-        self.send_request::<request::WorkspaceConfiguration>(ConfigurationParams { items })
-            .await
+    fn configuration(
+        &self,
+        items: Vec<ConfigurationItem>,
+    ) -> impl Future<Output = jsonrpc::Result<Vec<LSPAny>>> + Send {
+        let _ = items;
+        error!("Client does not implement method workspace/configuration");
+        future::ready(Err(Error::method_not_found()))
     }
 
-    async fn workspace_folders(&self) -> jsonrpc::Result<Option<Vec<WorkspaceFolder>>> {
-        self.send_request::<request::WorkspaceFoldersRequest>(())
-            .await
+    fn workspace_folders(
+        &self,
+    ) -> impl Future<Output = jsonrpc::Result<Option<Vec<WorkspaceFolder>>>> + Send {
+        error!("Client does not implement method workspace/workspaceFolders");
+        future::ready(Err(Error::method_not_found()))
     }
 
-    async fn apply_edit(&self, edit: WorkspaceEdit) -> jsonrpc::Result<ApplyWorkspaceEditResponse> {
-        self.send_request::<request::ApplyWorkspaceEdit>(ApplyWorkspaceEditParams {
-            edit,
-            label: None,
-        })
-        .await
+    fn apply_edit(
+        &self,
+        edit: WorkspaceEdit,
+    ) -> impl Future<Output = jsonrpc::Result<ApplyWorkspaceEditResponse>> + Send {
+        let _ = edit;
+        error!("Client does not implement method workspace/applyEdit");
+        future::ready(Err(Error::method_not_found()))
     }
 }
-
-impl<T: LanguageHandle> LanguageClient for T {}

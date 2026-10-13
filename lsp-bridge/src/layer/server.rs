@@ -1,7 +1,8 @@
 use futures::TryFutureExt;
 use log::error;
+use serde::Serialize;
 use serde_json::json;
-use std::task::{Context, Poll};
+use std::{fmt::Display, task::{Context, Poll}};
 use tower::{Layer, Service, ServiceExt};
 use tower_lsp_server::{
     LanguageServer,
@@ -10,9 +11,7 @@ use tower_lsp_server::{
 };
 
 use crate::layer::{
-    UniqueIdIter,
-    client::LanguageHandle,
-    id_map::{MapIdLayer, MapIdService, map_id},
+    UniqueIdIter, client::{LanguageClient, LanguageHandle}, id_map::{MapIdLayer, MapIdService, map_id},
 };
 
 #[derive(Clone)]
@@ -62,7 +61,7 @@ impl<S> LsServer<S> {
 
 impl<S> LanguageHandle for LsServer<S>
 where
-    S: Service<Request, Response = Option<Response>> + Clone + Sync + Send,
+    S: Service<Request, Response = Option<Response>> + Clone + Sync + Send + 'static,
     S::Error: Into<jsonrpc::Error>,
     S::Future: Send + 'static,
 {
@@ -135,7 +134,7 @@ where
 
 impl<S> LsServer<S>
 where
-    S: Service<Request, Response = Option<Response>> + Clone + Sync + Send,
+    S: Service<Request, Response = Option<Response>> + Clone + Sync + Send + 'static,
     S::Error: Into<jsonrpc::Error>,
     S::Future: Send + 'static,
 {
@@ -557,5 +556,132 @@ where
 
     async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<LSPAny>> {
         self.send_request::<request::ExecuteCommand>(params).await
+    }
+}
+
+impl<S> LanguageClient for LsServer<S>
+where
+    S: Service<Request, Response = Option<Response>> + Clone + Send + Sync + 'static,
+    S::Error: Into<jsonrpc::Error>,
+    S::Future: Send + 'static,
+{
+    async fn register_capability(&self, registrations: Vec<Registration>) -> jsonrpc::Result<()> {
+        self.send_request::<request::RegisterCapability>(RegistrationParams { registrations })
+            .await
+    }
+
+    async fn unregister_capability(
+        &self,
+        unregisterations: Vec<Unregistration>,
+    ) -> jsonrpc::Result<()> {
+        self.send_request::<request::UnregisterCapability>(UnregistrationParams {
+            unregisterations,
+        })
+        .await
+    }
+
+    async fn show_message<M: Display + Send>(&self, typ: MessageType, message: M) {
+        self.send_notification::<notification::ShowMessage>(ShowMessageParams {
+            typ,
+            message: message.to_string(),
+        })
+        .await;
+    }
+
+    async fn show_message_request<M: Display + Send>(
+        &self,
+        typ: MessageType,
+        message: M,
+        actions: Option<Vec<MessageActionItem>>,
+    ) -> jsonrpc::Result<Option<MessageActionItem>> {
+        self.send_request::<request::ShowMessageRequest>(ShowMessageRequestParams {
+            typ,
+            message: message.to_string(),
+            actions,
+        })
+        .await
+    }
+
+    async fn log_message<M: Display + Send>(&self, typ: MessageType, message: M) {
+        self.send_notification::<notification::LogMessage>(LogMessageParams {
+            typ,
+            message: message.to_string(),
+        })
+        .await;
+    }
+
+    async fn show_document(&self, params: ShowDocumentParams) -> jsonrpc::Result<bool> {
+        self.send_request::<request::ShowDocument>(params)
+            .await
+            .map(|res| res.success)
+    }
+
+    async fn telemetry_event<Ser: Serialize + Send>(&self, data: Ser) {
+        match serde_json::to_value(data) {
+            Err(e) => error!("invalid JSON in `telemetry/event` notification: {}", e),
+            Ok(value) => {
+                let value = match value {
+                    LSPAny::Object(value) => OneOf::Left(value),
+                    LSPAny::Array(value) => OneOf::Right(value),
+                    value => OneOf::Right(vec![value]),
+                };
+                self.send_notification::<notification::TelemetryEvent>(value)
+                    .await;
+            }
+        }
+    }
+
+    async fn code_lens_refresh(&self) -> jsonrpc::Result<()> {
+        self.send_request::<request::CodeLensRefresh>(()).await
+    }
+
+    async fn semantic_tokens_refresh(&self) -> jsonrpc::Result<()> {
+        self.send_request::<request::SemanticTokensRefresh>(())
+            .await
+    }
+
+    async fn inline_value_refresh(&self) -> jsonrpc::Result<()> {
+        self.send_request::<request::InlineValueRefreshRequest>(())
+            .await
+    }
+
+    async fn inlay_hint_refresh(&self) -> jsonrpc::Result<()> {
+        self.send_request::<request::InlayHintRefreshRequest>(())
+            .await
+    }
+
+    async fn workspace_diagnostic_refresh(&self) -> jsonrpc::Result<()> {
+        self.send_request::<request::WorkspaceDiagnosticRefresh>(())
+            .await
+    }
+
+    async fn publish_diagnostics(&self, uri: Uri, diags: Vec<Diagnostic>, version: Option<i32>) {
+        self.send_notification::<notification::PublishDiagnostics>(PublishDiagnosticsParams::new(
+            uri, diags, version,
+        ))
+        .await;
+    }
+
+    async fn create_work_done_progress(&self, token: ProgressToken) -> jsonrpc::Result<()> {
+        self.send_request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams { token })
+            .await
+    }
+
+    async fn configuration(&self, items: Vec<ConfigurationItem>) -> jsonrpc::Result<Vec<LSPAny>> {
+        self.send_request::<request::WorkspaceConfiguration>(ConfigurationParams { items })
+            .await
+    }
+
+    async fn workspace_folders(&self) -> jsonrpc::Result<Option<Vec<WorkspaceFolder>>> {
+        self.send_request::<request::WorkspaceFoldersRequest>(())
+            .await
+    }
+
+    async fn apply_edit(&self, edit: WorkspaceEdit) -> jsonrpc::Result<ApplyWorkspaceEditResponse> {
+        self.send_request::<request::ApplyWorkspaceEdit>(ApplyWorkspaceEditParams {
+            edit,
+            label: None,
+        })
+        .await
     }
 }
